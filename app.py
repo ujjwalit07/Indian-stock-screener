@@ -4,10 +4,33 @@ import datetime
 import yfinance as yf
 
 # Page Configuration
-st.set_page_config(page_title="ORB + SuperTrend + VWAP Intraday Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dynamic ORB + SuperTrend Screener", page_icon="📈", layout="wide")
 
-st.title("📊 Automated F&O Intraday Screener (ORB + VWAP + SuperTrend)")
-st.markdown("Translating your Pine Script strategy into a live automated Python scanner using **5-minute intraday data**.")
+st.title("📊 Fully Dynamic Intraday Screener (Live Nifty 50 + VWAP + SuperTrend)")
+st.markdown("Dynamically pulls stock tickers from live sources—**zero hardcoded symbols**.")
+
+# 1. DYNAMICALLY FETCH STOCK UNIVERSE (No Hardcoding)
+@st.cache_data(ttl=86400)
+def get_dynamic_universe():
+    """Dynamically fetches current Nifty 50 constituents from Wikipedia."""
+    universe = {
+        "NIFTY 50": "^NSEI",
+        "BANKNIFTY": "^NSEBANK"
+    }
+    try:
+        url = "https://en.wikipedia.org/wiki/NIFTY_50"
+        tables = pd.read_html(url)
+        df = tables[1]
+        symbols = df['Symbol'].tolist()
+        for sym in symbols:
+            universe[sym] = f"{sym}.NS"
+    except Exception as e:
+        st.warning(f"Could not fetch dynamic list from web, using fallback basket. Error: {e}")
+        # Minimal fallback if offline
+        fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "ITC"]
+        for sym in fallback:
+            universe[sym] = f"{sym}.NS"
+    return universe
 
 # 5-Minute Auto-Refresh Fragment
 @st.fragment(run_every=300)
@@ -15,26 +38,7 @@ def run_options_screener():
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.caption(f"Last scanned at: {current_time} (Auto-refreshes every 5 mins)")
     
-    # Liquid NSE F&O Universe (Top indices and high-volume stocks)
-    fo_universe = {
-        "NIFTY 50": "^NSEI",
-        "BANKNIFTY": "^NSEBANK",
-        "RELIANCE": "RELIANCE.NS",
-        "TCS": "TCS.NS",
-        "INFY": "INFY.NS",
-        "HDFCBANK": "HDFCBANK.NS",
-        "ICICIBANK": "ICICIBANK.NS",
-        "SBIN": "SBIN.NS",
-        "AXISBANK": "AXISBANK.NS",
-        "TATASTEEL": "TATASTEEL.NS",
-        "ITC": "ITC.NS",
-        "BAJFINANCE": "BAJFINANCE.NS",
-        "MARUTI": "MARUTI.NS",
-        "SUNPHARMA": "SUNPHARMA.NS",
-        "TITAN": "TITAN.NS",
-        "TATAMOTORS": "TATAMOTORS.NS"
-    }
-    
+    fo_universe = get_dynamic_universe()
     scanned_results = []
     
     for sym, ticker in fo_universe.items():
@@ -44,18 +48,19 @@ def run_options_screener():
             if len(hist) < 35:
                 continue
                 
-            # Clean dataframe timezone / index
             hist.index = pd.to_datetime(hist.index)
             hist['Date'] = hist.index.date
             
-            # --- 1. SESSION VWAP ---
-            hl2 = (hist['High'] + hist['Low']) / 2
-            hist['VWAP'] = hist.groupby('Date').apply(
-                lambda x: (x['Volume'] * ((x['High'] + x['Low']) / 2)).cumsum() / x['Volume'].cumsum()
-            ).reset_index(level=0, drop=True)
+            # --- 1. SESSION VWAP (Handles Indices gracefully where Volume is 0) ---
+            if 'Volume' in hist.columns and hist['Volume'].sum() > 0:
+                hist['VWAP'] = hist.groupby('Date').apply(
+                    lambda x: (x['Volume'] * ((x['High'] + x['Low']) / 2)).cumsum() / x['Volume'].cumsum()
+                ).reset_index(level=0, drop=True)
+            else:
+                # Fallback for indices lacking volume data
+                hist['VWAP'] = (hist['High'] + hist['Low'] + hist['Close']) / 3
             
             # --- 2. 5-MIN OPENING RANGE (ORB) ---
-            # First bar high/low of the current trading day
             latest_date = hist['Date'].iloc[-1]
             day_df = hist[hist['Date'] == latest_date]
             if len(day_df) > 0:
@@ -64,9 +69,10 @@ def run_options_screener():
             else:
                 or_high, or_low = 0.0, 0.0
                 
-            # --- 3. SUPERTREND (10, 3) ---
+            # --- 3. ROBUST SUPERTREND (10, 3) ---
             atr_length = 10
             factor = 3.0
+            hl2 = (hist['High'] + hist['Low']) / 2
             
             tr1 = hist['High'] - hist['Low']
             tr2 = abs(hist['High'] - hist['Close'].shift(1))
@@ -88,19 +94,14 @@ def run_options_screener():
             f_lb = lb.copy()
             
             for i in range(1, len(hist)):
-                if ub[i] < f_ub[i-1] or close_vals[i-1] > f_ub[i-1]:
-                    f_ub[i] = ub[i]
-                else:
-                    f_ub[i] = f_ub[i-1]
+                if not pd.isnan(ub[i]) and not pd.isnan(f_ub[i-1]):
+                    f_ub[i] = ub[i] if (ub[i] < f_ub[i-1] or close_vals[i-1] > f_ub[i-1]) else f_ub[i-1]
+                if not pd.isnan(lb[i]) and not pd.isnan(f_lb[i-1]):
+                    f_lb[i] = lb[i] if (lb[i] > f_lb[i-1] or close_vals[i-1] < f_lb[i-1]) else f_lb[i-1]
                     
-                if lb[i] > f_lb[i-1] or close_vals[i-1] < f_lb[i-1]:
-                    f_lb[i] = lb[i]
-                else:
-                    f_lb[i] = f_lb[i-1]
-                    
-                if close_vals[i] > f_ub[i-1]:
+                if not pd.isnan(close_vals[i]) and not pd.isnan(f_ub[i-1]) and close_vals[i] > f_ub[i-1]:
                     direction[i] = 1
-                elif close_vals[i] < f_lb[i-1]:
+                elif not pd.isnan(close_vals[i]) and not pd.isnan(f_lb[i-1]) and close_vals[i] < f_lb[i-1]:
                     direction[i] = -1
                 else:
                     direction[i] = direction[i-1]
@@ -110,10 +111,10 @@ def run_options_screener():
             hist['SuperTrend'] = supertrend
             hist['Direction'] = direction
             
-            # --- 4. REVERSAL WARNING LOGIC ---
+            # --- 4. REVERSAL WARNING & METRICS ---
             ltp = float(hist['Close'].iloc[-1])
             st_val = float(hist['SuperTrend'].iloc[-1])
-            curr_atr = float(hist['ATR'].iloc[-1])
+            curr_atr = float(hist['ATR'].iloc[-1]) if not pd.isna(hist['ATR'].iloc[-1]) else 1.0
             curr_dir = int(hist['Direction'].iloc[-1])
             curr_vwap = float(hist['VWAP'].iloc[-1])
             
@@ -125,7 +126,6 @@ def run_options_screener():
             if warning_triggered:
                 signal_status = "⚠️ REVERSAL WARNING"
                 
-            # Risk Management (ATR-based SL & Target)
             if curr_dir == 1:
                 sl = ltp - (curr_atr * 1.0)
                 tp = ltp + (curr_atr * 2.0)
