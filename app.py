@@ -2,34 +2,41 @@ import streamlit as st
 import pandas as pd
 import datetime
 import yfinance as yf
+import requests
 
 # Page Configuration
 st.set_page_config(page_title="Dynamic ORB + SuperTrend Screener", page_icon="📈", layout="wide")
 
 st.title("📊 Fully Dynamic Intraday Screener (Live Nifty 50 + VWAP + SuperTrend)")
-st.markdown("Dynamically pulls stock tickers from live sources—**zero hardcoded symbols**.")
+st.markdown("Dynamically pulls stock tickers from live sources with proper request headers.")
 
-# 1. DYNAMICALLY FETCH STOCK UNIVERSE (No Hardcoding)
+# 1. DYNAMICALLY FETCH STOCK UNIVERSE (With User-Agent Headers to fix 403)
 @st.cache_data(ttl=86400)
 def get_dynamic_universe():
-    """Dynamically fetches current Nifty 50 constituents from Wikipedia."""
     universe = {
         "NIFTY 50": "^NSEI",
         "BANKNIFTY": "^NSEBANK"
     }
     try:
         url = "https://en.wikipedia.org/wiki/NIFTY_50"
-        tables = pd.read_html(url)
-        df = tables[1]
-        symbols = df['Symbol'].tolist()
-        for sym in symbols:
-            universe[sym] = f"{sym}.NS"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            tables = pd.read_html(response.text)
+            df = tables[1]
+            symbols = df['Symbol'].tolist()
+            for sym in symbols:
+                universe[sym] = f"{sym}.NS"
+        else:
+            raise Exception(f"HTTP status {response.status_code}")
+            
     except Exception as e:
-        st.warning(f"Could not fetch dynamic list from web, using fallback basket. Error: {e}")
-        # Minimal fallback if offline
+        st.warning(f"Using fallback stock basket due to network restriction: {e}")
         fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "ITC"]
         for sym in fallback:
             universe[sym] = f"{sym}.NS"
+            
     return universe
 
 # 5-Minute Auto-Refresh Fragment
@@ -51,13 +58,12 @@ def run_options_screener():
             hist.index = pd.to_datetime(hist.index)
             hist['Date'] = hist.index.date
             
-            # --- 1. SESSION VWAP (Handles Indices gracefully where Volume is 0) ---
+            # --- 1. SESSION VWAP ---
             if 'Volume' in hist.columns and hist['Volume'].sum() > 0:
                 hist['VWAP'] = hist.groupby('Date').apply(
                     lambda x: (x['Volume'] * ((x['High'] + x['Low']) / 2)).cumsum() / x['Volume'].cumsum()
                 ).reset_index(level=0, drop=True)
             else:
-                # Fallback for indices lacking volume data
                 hist['VWAP'] = (hist['High'] + hist['Low'] + hist['Close']) / 3
             
             # --- 2. 5-MIN OPENING RANGE (ORB) ---
@@ -69,7 +75,7 @@ def run_options_screener():
             else:
                 or_high, or_low = 0.0, 0.0
                 
-            # --- 3. ROBUST SUPERTREND (10, 3) ---
+            # --- 3. SUPERTREND (10, 3) ---
             atr_length = 10
             factor = 3.0
             hl2 = (hist['High'] + hist['Low']) / 2
