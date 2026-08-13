@@ -4,10 +4,10 @@ import datetime
 import yfinance as yf
 
 # Page Configuration
-st.set_page_config(page_title="Options 5-Min Auto-Refresh Dashboard", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Options ATR-Based Dashboard", page_icon="📈", layout="wide")
 
-st.title("📊 Live 10-Stock/Index Options Signal Dashboard")
-st.markdown("Tracking **real-time Indian market prices** with tight intraday risk management.")
+st.title("📊 Live 10-Stock/Index Options Signal Dashboard (ATR-Driven)")
+st.markdown("Stop Loss and Targets are dynamically calculated using **real-time ATR (Average True Range)** market data.")
 
 @st.fragment(run_every=300)
 def render_options_dashboard():
@@ -31,31 +31,49 @@ def render_options_dashboard():
     for sym, ticker in stock_tickers.items():
         try:
             t = yf.Ticker(ticker)
-            hist = t.history(period="5d")
+            # Fetch enough historical data to compute a 14-period ATR
+            hist = t.history(period="1mo")
+            if len(hist) < 15:
+                raise ValueError("Not enough data")
+                
             ltp = float(hist['Close'].iloc[-1])
             prev_close = float(hist['Close'].iloc[-2])
-        except:
+            
+            # Calculate True Range (TR)
+            hist['H-L'] = hist['High'] - hist['Low']
+            hist['H-PC'] = abs(hist['High'] - hist['Close'].shift(1))
+            hist['L-PC'] = abs(hist['Low'] - hist['Close'].shift(1))
+            hist['TR'] = hist[['H-L', 'H-PC', 'L-PC']].max(axis=1)
+            
+            # Calculate 14-period ATR
+            hist['ATR'] = hist['TR'].rolling(window=14).mean()
+            current_atr = float(hist['ATR'].iloc[-1])
+            
+        except Exception:
+            # Fallback if API fails
             ltp = 24500.0 if "NIFTY" in sym else 1000.0
             prev_close = ltp
+            current_atr = ltp * 0.005  # Default 0.5% fallback ATR
             
+        # Signal determination based on market price action vs previous close
         action = "BUY CE" if ltp >= prev_close else "BUY PE"
         
-        # Tighter Multipliers for 5-min scalping
-        # Indices need smaller % moves than Stocks
-        if "NIFTY" in sym or "BANKNIFTY" in sym:
-            sl_mult, tp_mult = 0.002, 0.004  # 0.2% SL, 0.4% Target
-        else:
-            sl_mult, tp_mult = 0.005, 0.010  # 0.5% SL, 1.0% Target
+        # Market-Data Driven Risk Management (using ATR multipliers)
+        # Stop loss = 1.0x ATR, Target = 2.0x ATR (1:2 Risk-Reward Ratio)
+        sl_atr_multiplier = 1.0
+        tp_atr_multiplier = 2.0
         
         if action == "BUY CE":
-            sl, tp = ltp * (1 - sl_mult), ltp * (1 + tp_mult)
+            sl = ltp - (current_atr * sl_atr_multiplier)
+            tp = ltp + (current_atr * tp_atr_multiplier)
         else:
-            sl, tp = ltp * (1 + sl_mult), ltp * (1 - tp_mult)
+            sl = ltp + (current_atr * sl_atr_multiplier)
+            tp = ltp - (current_atr * tp_atr_multiplier)
             
-        # Dictionary keys must be in order of appearance in the table
         data.append({
             "Symbol": sym,
             "Spot / LTP": ltp,
+            "ATR (14)": current_atr,
             "Signal": action,
             "Stop Loss (SL)": sl,
             "Target (TP)": tp,
@@ -73,6 +91,7 @@ def render_options_dashboard():
     # Clean formatting
     styled_df = df.style.map(color_signals, subset=['Signal']).format({
         "Spot / LTP": "{:.2f}",
+        "ATR (14)": "{:.2f}",
         "Stop Loss (SL)": "{:.2f}",
         "Target (TP)": "{:.2f}"
     })
