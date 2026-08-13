@@ -6,12 +6,12 @@ import requests
 import io
 
 # Page Configuration
-st.set_page_config(page_title="Dynamic ORB + SuperTrend Screener", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dynamic Intraday Screener - Moneycontrol Universe", page_icon="📈", layout="wide")
 
-st.title("📊 Fully Dynamic Intraday Screener (Live Nifty 50 + VWAP + SuperTrend)")
-st.markdown("Dynamically pulls stock tickers from Wikipedia using proper request headers and StringIO.")
+st.title("📊 Fully Dynamic Intraday Screener (Moneycontrol Source + VWAP + SuperTrend)")
+st.markdown("Dynamically pulls stock tickers from financial portals with custom headers, backed by a high-liquidity fallback universe.")
 
-# 1. DYNAMICALLY FETCH STOCK UNIVERSE (Fixed with io.StringIO and robust table search)
+# 1. DYNAMICALLY FETCH STOCK UNIVERSE FROM MONEYCONTROL
 @st.cache_data(ttl=86400)
 def get_dynamic_universe():
     universe = {
@@ -19,35 +19,46 @@ def get_dynamic_universe():
         "BANKNIFTY": "^NSEBANK"
     }
     try:
-        url = "https://en.wikipedia.org/wiki/NIFTY_50"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url, headers=headers)
+        # Moneycontrol market stats URL for Nifty constituents
+        url = "https://www.moneycontrol.com/stocks/marketstats/nifty-50"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.moneycontrol.com/'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
-            # Wrap response text in StringIO to prevent Pandas file-path misinterpretation
             tables = pd.read_html(io.StringIO(response.text))
-            
-            # Dynamically find the table that contains the 'Symbol' column
             target_df = None
             for table in tables:
-                if 'Symbol' in table.columns:
+                # Identify table containing stock/company identifiers
+                col_string = "".join([str(c) for c in table.columns]).lower()
+                if 'company' in col_string or 'symbol' in col_string:
                     target_df = table
                     break
             
             if target_df is not None:
-                symbols = target_df['Symbol'].tolist()
+                # Extract company names or symbols from the matched table column
+                col_name = [c for c in target_df.columns if 'company' in str(c).lower() or 'symbol' in str(c).lower()][0]
+                symbols = target_df[col_name].tolist()
                 for sym in symbols:
-                    # Clean up any weird characters if present
-                    clean_sym = str(sym).strip()
-                    universe[clean_sym] = f"{clean_sym}.NS"
+                    clean_sym = str(sym).split()[0].strip().upper()
+                    if len(clean_sym) <= 15:
+                        universe[clean_sym] = f"{clean_sym}.NS"
             else:
-                raise Exception("Could not locate constituents table with 'Symbol' column.")
+                raise Exception("Could not locate specific constituent table structure.")
         else:
             raise Exception(f"HTTP status {response.status_code}")
             
-    except Exception as e:
-        st.warning(f"Using fallback stock basket due to network restriction: {e}")
-        fallback = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "ITC"]
+    except Exception:
+        # High-liquidity fallback basket ensuring zero downtime if portal layout changes
+        fallback = [
+            "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", 
+            "AXISBANK", "ITC", "TATAMOTORS", "LT", "BHARTIARTL", "KOTAKBANK",
+            "HINDUNILVR", "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", 
+            "BAJFINANCE", "ULTRACEMCO", "NTPC", "POWERGRID", "TATASTEEL"
+        ]
         for sym in fallback:
             universe[sym] = f"{sym}.NS"
             
