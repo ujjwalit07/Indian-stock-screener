@@ -3,14 +3,15 @@ import pandas as pd
 import datetime
 import yfinance as yf
 import requests
+import io
 
 # Page Configuration
 st.set_page_config(page_title="Dynamic ORB + SuperTrend Screener", page_icon="📈", layout="wide")
 
 st.title("📊 Fully Dynamic Intraday Screener (Live Nifty 50 + VWAP + SuperTrend)")
-st.markdown("Dynamically pulls stock tickers from live sources with proper request headers.")
+st.markdown("Dynamically pulls stock tickers from Wikipedia using proper request headers and StringIO.")
 
-# 1. DYNAMICALLY FETCH STOCK UNIVERSE (With User-Agent Headers to fix 403)
+# 1. DYNAMICALLY FETCH STOCK UNIVERSE (Fixed with io.StringIO and robust table search)
 @st.cache_data(ttl=86400)
 def get_dynamic_universe():
     universe = {
@@ -23,11 +24,24 @@ def get_dynamic_universe():
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
-            tables = pd.read_html(response.text)
-            df = tables[1]
-            symbols = df['Symbol'].tolist()
-            for sym in symbols:
-                universe[sym] = f"{sym}.NS"
+            # Wrap response text in StringIO to prevent Pandas file-path misinterpretation
+            tables = pd.read_html(io.StringIO(response.text))
+            
+            # Dynamically find the table that contains the 'Symbol' column
+            target_df = None
+            for table in tables:
+                if 'Symbol' in table.columns:
+                    target_df = table
+                    break
+            
+            if target_df is not None:
+                symbols = target_df['Symbol'].tolist()
+                for sym in symbols:
+                    # Clean up any weird characters if present
+                    clean_sym = str(sym).strip()
+                    universe[clean_sym] = f"{clean_sym}.NS"
+            else:
+                raise Exception("Could not locate constituents table with 'Symbol' column.")
         else:
             raise Exception(f"HTTP status {response.status_code}")
             
