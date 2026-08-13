@@ -4,11 +4,12 @@ import datetime
 import yfinance as yf
 
 # Page Configuration
-st.set_page_config(page_title="Options ATR-Based Dashboard", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Options 5-Min ATR Dashboard", page_icon="📈", layout="wide")
 
-st.title("📊 Live 10-Stock/Index Options Signal Dashboard (ATR-Driven)")
-st.markdown("Stop Loss and Targets are dynamically calculated using **real-time ATR (Average True Range)** market data.")
+st.title("📊 Live 10-Stock/Index Options Signal Dashboard (5-Min ATR)")
+st.markdown("Stop Loss and Targets are dynamically calculated using **real-time 5-minute intraday ATR** volatility.")
 
+# 5-Minute Auto-Refresh Fragment
 @st.fragment(run_every=300)
 def render_options_dashboard():
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -31,49 +32,48 @@ def render_options_dashboard():
     for sym, ticker in stock_tickers.items():
         try:
             t = yf.Ticker(ticker)
-            # Fetch enough historical data to compute a 14-period ATR
-            hist = t.history(period="1mo")
+            # Fetch 5-minute intraday candles (Yahoo Finance allows 5m data up to the last 60 days)
+            hist = t.history(period="5d", interval="5m")
             if len(hist) < 15:
-                raise ValueError("Not enough data")
+                raise ValueError("Not enough intraday data")
                 
             ltp = float(hist['Close'].iloc[-1])
             prev_close = float(hist['Close'].iloc[-2])
             
-            # Calculate True Range (TR)
+            # Calculate True Range (TR) on 5m data
             hist['H-L'] = hist['High'] - hist['Low']
             hist['H-PC'] = abs(hist['High'] - hist['Close'].shift(1))
             hist['L-PC'] = abs(hist['Low'] - hist['Close'].shift(1))
             hist['TR'] = hist[['H-L', 'H-PC', 'L-PC']].max(axis=1)
             
-            # Calculate 14-period ATR
+            # 14-period 5-minute ATR
             hist['ATR'] = hist['TR'].rolling(window=14).mean()
             current_atr = float(hist['ATR'].iloc[-1])
             
         except Exception:
-            # Fallback if API fails
+            # Fallback if API fails temporarily
             ltp = 24500.0 if "NIFTY" in sym else 1000.0
             prev_close = ltp
-            current_atr = ltp * 0.005  # Default 0.5% fallback ATR
+            current_atr = ltp * 0.0015  # Tighter intraday fallback
             
-        # Signal determination based on market price action vs previous close
+        # Signal determination based on recent price movement
         action = "BUY CE" if ltp >= prev_close else "BUY PE"
         
-        # Market-Data Driven Risk Management (using ATR multipliers)
-        # Stop loss = 1.0x ATR, Target = 2.0x ATR (1:2 Risk-Reward Ratio)
-        sl_atr_multiplier = 1.0
-        tp_atr_multiplier = 2.0
+        # 5-Minute Intraday Multipliers (1.0x ATR for Stop Loss, 2.0x ATR for Target)
+        sl_mult = 1.0
+        tp_mult = 2.0
         
         if action == "BUY CE":
-            sl = ltp - (current_atr * sl_atr_multiplier)
-            tp = ltp + (current_atr * tp_atr_multiplier)
+            sl = ltp - (current_atr * sl_mult)
+            tp = ltp + (current_atr * tp_mult)
         else:
-            sl = ltp + (current_atr * sl_atr_multiplier)
-            tp = ltp - (current_atr * tp_atr_multiplier)
+            sl = ltp + (current_atr * sl_mult)
+            tp = ltp - (current_atr * tp_mult)
             
         data.append({
             "Symbol": sym,
             "Spot / LTP": ltp,
-            "ATR (14)": current_atr,
+            "5m ATR": current_atr,
             "Signal": action,
             "Stop Loss (SL)": sl,
             "Target (TP)": tp,
@@ -88,10 +88,10 @@ def render_options_dashboard():
         if val == "BUY PE": return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
         return ''
 
-    # Clean formatting
+    # Clean formatting to 2 decimal places
     styled_df = df.style.map(color_signals, subset=['Signal']).format({
         "Spot / LTP": "{:.2f}",
-        "ATR (14)": "{:.2f}",
+        "5m ATR": "{:.2f}",
         "Stop Loss (SL)": "{:.2f}",
         "Target (TP)": "{:.2f}"
     })
