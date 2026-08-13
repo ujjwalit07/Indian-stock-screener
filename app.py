@@ -68,7 +68,7 @@ def render_options_dashboard():
             return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
         return ''
 
-    styled_df = df.style.applymap(color_signals, subset=['Signal'])
+   styled_df = df.style.map(color_signals, subset=['Signal'])
     
     # Render table on UI
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
