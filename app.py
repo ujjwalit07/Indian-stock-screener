@@ -2,74 +2,67 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import datetime
 
 st.set_page_config(page_title="Indian Breakout Screener", layout="wide")
 
-# Sidebar Configuration matches the "Configurable Parameters Panel" in the video
 st.sidebar.header("⚙️ Screener Parameters")
 timeframe = st.sidebar.selectbox("Timeframe", ["1d", "1wk", "1h"], index=0)
-consolidation_pct = st.sidebar.number_input("Max Consolidation Range (%)", value=12.0)
-breakout_close_pct = st.sidebar.number_input("Breakout Above Range (%)", value=2.0)
-body_size_pct = st.sidebar.number_input("Min Candle Body Size (%)", value=5.0) # Corrected Rule
-rel_volume_min = st.sidebar.number_input("Min Relative Volume (x)", value=1.5) # Corrected Rule
-min_avg_vol = st.sidebar.number_input("Min Avg Volume", value=500000)
+consolidation_pct = st.sidebar.number_input("Max Consolidation Range (%)", value=25.0)
+breakout_close_pct = st.sidebar.number_input("Breakout Above Range (%)", value=0.0) # Set to 0 to catch any 20-day high
+body_size_pct = st.sidebar.number_input("Min Candle Body Size (%)", value=1.0)
+rel_volume_min = st.sidebar.number_input("Min Relative Volume (x)", value=0.8)
+min_avg_vol = st.sidebar.number_input("Min Avg Volume", value=100000)
+show_debug = st.sidebar.checkbox("Show Debug Details", value=False)
 
-# Sample Nifty 50 Tickers (Add more as needed)
+# Expanded list of top NSE tickers
 NIFTY_TICKERS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
     "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LARSEN.NS", "TATAMOTORS.NS", 
     "SUNPHARMA.NS", "NTPC.NS", "KOTAKBANK.NS", "MARUTI.NS", "ONGC.NS",
-    "ZOMATO.NS", "TATASTEEL.NS", "COALINDIA.NS", "BAJFINANCE.NS"
+    "ZOMATO.NS", "TATASTEEL.NS", "COALINDIA.NS", "BAJFINANCE.NS", "HAL.NS",
+    "BEL.NS", "PERSISTENT.NS", "TRENT.NS", "DIXON.NS", "MAZDOCK.NS"
 ]
 
-@st.cache_data(ttl=3600) # Cache for 1 hour to prevent hitting API limits
-def scan_stocks(tickers, interval):
+# Passed parameters as arguments so Streamlit invalidates cache when sliders change
+@st.cache_data(ttl=300)
+def scan_stocks(tickers, interval, cons_pct, breakout_pct, body_pct, rel_vol_m, min_vol):
     results = []
     charts = {}
+    debug_logs = []
     
     for ticker in tickers:
         try:
-            # Fetch data
             stock = yf.Ticker(ticker)
             df = stock.history(period="6mo", interval=interval)
             
-            if len(df) < 60: 
+            if df.empty or len(df) < 30: 
+                debug_logs.append(f"❌ {ticker}: No data returned from Yahoo Finance.")
                 continue
                 
-            # Current (Breakout) Candle and Previous Data (Consolidation)
             latest = df.iloc[-1]
-            prev_df = df.iloc[-21:-1] # Lookback 20 periods
+            prev_df = df.iloc[-21:-1]
             
-            # 1. Consolidation Range (< 12%)
+            # 1. Consolidation Range
             cons_high = prev_df['High'].max()
             cons_low = prev_df['Low'].min()
             range_pct = ((cons_high - cons_low) / cons_low) * 100
             
-            # 2. Breakout Close (> 2% above range)
-            breakout_level = cons_high * (1 + (breakout_close_pct / 100))
-            is_breakout = latest['Close'] > breakout_level
+            # 2. Breakout Level
+            breakout_level = cons_high * (1 + (breakout_pct / 100))
+            is_breakout = latest['Close'] >= breakout_level
             
-            # 3. Candle Body Size (>= 5%)
+            # 3. Body Size
             body_size = (abs(latest['Close'] - latest['Open']) / latest['Open']) * 100
-            is_convincing = body_size >= body_size_pct
+            is_convincing = body_size >= body_pct
             
-            # 5. & 6. Volume rules
+            # 4. Volume
             avg_vol = prev_df['Volume'].mean()
             rel_vol = latest['Volume'] / avg_vol if avg_vol > 0 else 0
-            is_high_vol = rel_vol >= rel_volume_min
-            is_liquid = avg_vol > min_avg_vol
+            is_high_vol = rel_vol >= rel_vol_m
+            is_liquid = avg_vol >= min_vol
             
-            # 7. & 8. Trend and Momentum
-            high_50 = df['High'].rolling(50).max().iloc[-2]
-            sma_20 = df['Close'].rolling(20).mean().iloc[-1]
-            sma_50 = df['Close'].rolling(50).mean().iloc[-1]
-            
-            near_high = latest['Close'] >= (high_50 * 0.90)
-            uptrend = (latest['Close'] > sma_20) and (latest['Close'] > sma_50)
-            
-            # Check if all conditions pass
-            if is_breakout and is_convincing and is_high_vol and is_liquid and near_high and uptrend and (range_pct <= consolidation_pct):
+            # Evaluate all
+            if is_breakout and is_convincing and is_high_vol and is_liquid and (range_pct <= cons_pct):
                 results.append({
                     "Ticker": ticker,
                     "Price (₹)": round(latest['Close'], 2),
@@ -77,35 +70,41 @@ def scan_stocks(tickers, interval):
                     "Body Size": f"{round(body_size, 2)}%",
                     "Consolidation": f"{round(range_pct, 2)}%"
                 })
-                
-                # Save data for charting
                 charts[ticker] = {
-                    "data": df.iloc[-60:], # Last 60 candles for visual
+                    "data": df.iloc[-60:],
                     "cons_high": cons_high,
                     "cons_low": cons_low
                 }
+                debug_logs.append(f"✅ {ticker}: PASSED ALL CHECKS!")
+            else:
+                reasons = []
+                if not is_breakout: reasons.append(f"Close (₹{round(latest['Close'],1)}) < Breakout Level (₹{round(breakout_level,1)})")
+                if not is_convincing: reasons.append(f"Body ({round(body_size,1)}%) < Min ({body_pct}%)")
+                if not is_high_vol: reasons.append(f"RelVol ({round(rel_vol,1)}x) < Min ({rel_vol_m}x)")
+                if range_pct > cons_pct: reasons.append(f"Consolidation ({round(range_pct,1)}%) > Max ({cons_pct}%)")
+                
+                debug_logs.append(f"⚠️ {ticker}: Failed -> " + ", ".join(reasons))
                 
         except Exception as e:
-            pass # Skip ticker on error
+            debug_logs.append(f"❌ {ticker}: Exception -> {str(e)}")
             
-    return results, charts
+    return results, charts, debug_logs
 
 # --- UI Layout ---
 st.title("📈 Indian Market Breakout Screener")
-st.markdown("Scans NSE stocks for tight consolidation followed by high-volume breakouts.")
 
 if st.button("🚀 Run Scan", type="primary"):
-    with st.spinner(f"Scanning {len(NIFTY_TICKERS)} stocks on {timeframe} timeframe..."):
-        results, charts = scan_stocks(NIFTY_TICKERS, timeframe)
+    with st.spinner("Scanning NSE stocks..."):
+        results, charts, debug_logs = scan_stocks(
+            NIFTY_TICKERS, timeframe, consolidation_pct, 
+            breakout_close_pct, body_size_pct, rel_volume_min, min_avg_vol
+        )
         
         if not results:
-            st.warning("No stocks met the tight breakout criteria right now. (Try lowering the Min Candle Body Size or changing the timeframe).")
+            st.warning("No stocks met the criteria for the latest candle.")
         else:
-            st.success(f"Found {len(results)} breakout(s)!")
+            st.success(f"Found {len(results)} matching stock(s)!")
             st.dataframe(pd.DataFrame(results), use_container_width=True)
-            
-            # Draw Charts (Just like the video's UI)
-            st.markdown("### 📊 Breakout Charts")
             
             for res in results:
                 ticker = res["Ticker"]
@@ -119,7 +118,6 @@ if st.button("🚀 Run Scan", type="primary"):
                     name="Price"
                 )])
                 
-                # Draw the Consolidation Box
                 fig.add_shape(
                     type="rect",
                     x0=df_chart.index[-21], y0=chart_info["cons_low"],
@@ -129,11 +127,15 @@ if st.button("🚀 Run Scan", type="primary"):
                 )
                 
                 fig.update_layout(
-                    title=f"{ticker} - Breakout from Consolidation Range",
+                    title=f"{ticker} - Breakout Chart",
                     yaxis_title="Price (₹)",
                     xaxis_rangeslider_visible=False,
-                    height=400,
-                    margin=dict(l=0, r=0, t=40, b=0)
+                    height=400
                 )
-                
                 st.plotly_chart(fig, use_container_width=True)
+                
+        if show_debug:
+            st.markdown("---")
+            st.markdown("### 🔍 Debug Logs")
+            for log in debug_logs:
+                st.text(log)
