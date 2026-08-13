@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import pytz
 import yfinance as yf
 import requests
 
@@ -28,12 +29,36 @@ def get_momentum_universe():
         "HINDALCO": "HINDALCO.NS", "HAL": "HAL.NS", "DLF": "DLF.NS", "NIFTY 50": "^NSEI"
     }
 
-# Fast Auto-Refresh Fragment (Every 2 minutes for quicker updates)
+# Check if NSE Market is Currently Open (IST Timezone)
+def is_market_open():
+    ist = pytz.timezone('Asia/Kolkata')
+    now_ist = datetime.datetime.now(ist)
+    
+    # Check if weekend (Saturday = 5, Sunday = 6)
+    if now_ist.weekday() >= 5:
+        return False, "Market is Closed (Weekend)"
+        
+    market_start = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_end = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    
+    if market_start <= now_ist <= market_end:
+        return True, "Market is Open"
+    else:
+        return False, "Market is Closed (Active hours: 09:15 AM - 03:30 PM IST)"
+
+# Fast Auto-Refresh Fragment
 @st.fragment(run_every=120)
 def run_momentum_screener():
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ist = pytz.timezone('Asia/Kolkata')
+    current_time = datetime.datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
     st.caption(f"Last scanned at: {current_time} (Auto-refreshes every 2 mins)")
     
+    open_status, message = is_market_open()
+    
+    if not open_status:
+        st.warning(f"⚠️ **{message}**. Live intraday screening is paused to prevent stale post-market data distortion. Check back during trading hours (9:15 AM - 3:30 PM IST).")
+        return
+
     universe = get_momentum_universe()
     session = requests.Session()
     session.headers.update({
@@ -63,7 +88,6 @@ def run_momentum_screener():
         st.warning("Could not retrieve market data.")
         return
 
-    # Focus on top 20 high-volume tickers for speed and liquidity
     vol_df = pd.DataFrame(volume_data)
     top_active = vol_df.sort_values(by="Volume", ascending=False).head(20)
     
@@ -88,24 +112,19 @@ def run_momentum_screener():
             hist.index = pd.to_datetime(hist.index)
             hist['Date'] = hist.index.date
             
-            # 1. Session VWAP Calculation
+            # Session VWAP Calculation
             hist['VWAP'] = hist.groupby('Date').apply(
                 lambda x: (x['Volume'] * ((x['High'] + x['Low']) / 2)).cumsum() / x['Volume'].cumsum()
             ).reset_index(level=0, drop=True)
             
-            # 2. Volume Surge Check (Latest volume vs 10-period average volume)
+            # Volume Surge Check
             hist['Avg_Volume'] = hist['Volume'].rolling(window=10).mean()
             
-            # Extract latest candle variables
             ltp = float(hist['Close'].iloc[-1])
-            prev_close = float(hist['Close'].iloc[-2])
             vwap = float(hist['VWAP'].iloc[-1])
             latest_vol = float(hist['Volume'].iloc[-1])
             avg_vol = float(hist['Avg_Volume'].iloc[-1])
             
-            # Momentum Rules for 10-15 min trades:
-            # - Volume surge: Latest volume is at least 1.5x the 10-period average
-            # - Price momentum: Last 2 consecutive green/red candles
             is_volume_surge = latest_vol > (1.5 * avg_vol)
             
             green_candle_1 = hist['Close'].iloc[-1] > hist['Open'].iloc[-1]
@@ -126,7 +145,6 @@ def run_momentum_screener():
                 status = "WATCHING"
                 action = "NEUTRAL"
             
-            # Only display active momentum signals to keep the interface clean
             if action != "NEUTRAL":
                 scanned_results.append({
                     "Symbol": sym,
@@ -156,6 +174,6 @@ def run_momentum_screener():
         
         st.dataframe(styled_df, use_container_width=True, hide_index=True)
     else:
-        st.info("Scanning active tickers... No immediate 10-15 minute volume breakout triggers found right now. Re-scanning automatically.")
+        st.info("Scanning active tickers... No immediate 10-15 minute volume breakout triggers found right now.")
 
 run_momentum_screener()
