@@ -7,8 +7,8 @@ import requests
 # Page Configuration
 st.set_page_config(page_title="NSE F&O Intraday Screener", page_icon="📈", layout="wide")
 
-st.title("📊 NSE F&O Intraday Screener (Extended Universe + VWAP + SuperTrend)")
-st.markdown("Scanning high-liquidity NSE Futures & Options stocks using robust local definitions.")
+st.title("📊 NSE F&O Intraday Screener (Debug & Fix Mode)")
+st.markdown("Scanning NSE Futures & Options stocks with visible error tracking.")
 
 # 1. EXTENDED NSE F&O STOCK UNIVERSE
 @st.cache_data(ttl=86400)
@@ -47,13 +47,19 @@ def run_options_screener():
     
     fo_universe = get_custom_universe()
     scanned_results = []
+    last_error = None
     
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    for sym, ticker in fo_universe.items():
+    # Test with a small subset first or loop through all
+    progress_bar = st.progress(0, text="Initializing market scan...")
+    total_stocks = len(fo_universe)
+    
+    for idx, (sym, ticker) in enumerate(fo_universe.items()):
+        progress_bar.progress((idx + 1) / total_stocks, text=f"Scanning: {sym} ({idx+1}/{total_stocks})")
         try:
             t = yf.Ticker(ticker, session=session)
             hist = t.history(period="5d", interval="5m")
@@ -162,11 +168,17 @@ def run_options_screener():
                 "Timeframe": "5m"
             })
             
-        except Exception:
+        except Exception as e:
+            last_error = str(e)
             continue
             
+    progress_bar.empty()
+    
     if not scanned_results:
-        st.info("Scanning market... No valid data retrieved for the current cycle.")
+        st.error(f"Scanning complete, but no valid data was retrieved.")
+        if last_error:
+            st.warning(f"Last encountered exception: `{last_error}`")
+        st.info("Tip: Yahoo Finance sometimes blocks automated cloud IPs or throttles requests when querying too many symbols at once. Try running it locally or reducing the stock list size.")
         return
         
     df = pd.DataFrame(scanned_results)
