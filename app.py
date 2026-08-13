@@ -3,65 +3,40 @@ import pandas as pd
 import datetime
 import yfinance as yf
 import requests
-import io
 
 # Page Configuration
-st.set_page_config(page_title="Dynamic Intraday Screener - Moneycontrol Universe", page_icon="📈", layout="wide")
+st.set_page_config(page_title="NSE F&O Intraday Screener", page_icon="📈", layout="wide")
 
-st.title("📊 Fully Dynamic Intraday Screener (Moneycontrol Source + VWAP + SuperTrend)")
-st.markdown("Dynamically pulls stock tickers from financial portals with custom headers, backed by a high-liquidity fallback universe.")
+st.title("📊 NSE F&O Intraday Screener (Extended Universe + VWAP + SuperTrend)")
+st.markdown("Scanning high-liquidity NSE Futures & Options stocks using robust local definitions.")
 
-# 1. DYNAMICALLY FETCH STOCK UNIVERSE FROM MONEYCONTROL
+# 1. EXTENDED NSE F&O STOCK UNIVERSE
 @st.cache_data(ttl=86400)
-def get_dynamic_universe():
+def get_custom_universe():
+    fo_stocks = [
+        "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", 
+        "AXISBANK", "ITC", "TATAMOTORS", "LT", "BHARTIARTL", "KOTAKBANK",
+        "HINDUNILVR", "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", 
+        "BAJFINANCE", "ULTRACEMCO", "NTPC", "POWERGRID", "TATASTEEL",
+        "WIPRO", "HCLTECH", "ADANIENT", "ADANIPORTS", "COALINDIA", 
+        "GRASIM", "JSWSTEEL", "ONGC", "BPCL", "HEROMOTOCO", "EICHERMOT",
+        "BRITANNIA", "NESTLEIND", "TATACONSUM", "CIPLA", "DRREDDY",
+        "DIVISLAB", "APOLLOHOSP", "BAJAJ-AUTO", "BAJAJFINSV", "SBILIFE",
+        "HDFCLIFE", "SHRIRAMFIN", "TRENT", "BEL", "M&M", "INDUSINDBK",
+        "HINDALCO", "HAL", "CHOLAFIN", "MUTHOOTFIN", "DLF", "GODREJPROP",
+        "PIIND", "NAVINFLUOR", "SRF", "LUPIN", "AUROPHARMA", "CANBK",
+        "BANKBARODA", "PNB", "IDFCFIRSTB", "FEDERALBNK", "IPCALAB"
+    ]
+    
     universe = {
         "NIFTY 50": "^NSEI",
         "BANKNIFTY": "^NSEBANK"
     }
-    try:
-        # Moneycontrol market stats URL for Nifty constituents
-        url = "https://www.moneycontrol.com/stocks/marketstats/nifty-50"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.moneycontrol.com/'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
+    
+    for sym in fo_stocks:
+        clean_sym = sym.strip().upper()
+        universe[clean_sym] = f"{clean_sym}.NS"
         
-        if response.status_code == 200:
-            tables = pd.read_html(io.StringIO(response.text))
-            target_df = None
-            for table in tables:
-                # Identify table containing stock/company identifiers
-                col_string = "".join([str(c) for c in table.columns]).lower()
-                if 'company' in col_string or 'symbol' in col_string:
-                    target_df = table
-                    break
-            
-            if target_df is not None:
-                # Extract company names or symbols from the matched table column
-                col_name = [c for c in target_df.columns if 'company' in str(c).lower() or 'symbol' in str(c).lower()][0]
-                symbols = target_df[col_name].tolist()
-                for sym in symbols:
-                    clean_sym = str(sym).split()[0].strip().upper()
-                    if len(clean_sym) <= 15:
-                        universe[clean_sym] = f"{clean_sym}.NS"
-            else:
-                raise Exception("Could not locate specific constituent table structure.")
-        else:
-            raise Exception(f"HTTP status {response.status_code}")
-            
-    except Exception:
-        # High-liquidity fallback basket ensuring zero downtime if portal layout changes
-        fallback = [
-            "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", 
-            "AXISBANK", "ITC", "TATAMOTORS", "LT", "BHARTIARTL", "KOTAKBANK",
-            "HINDUNILVR", "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", 
-            "BAJFINANCE", "ULTRACEMCO", "NTPC", "POWERGRID", "TATASTEEL"
-        ]
-        for sym in fallback:
-            universe[sym] = f"{sym}.NS"
-            
     return universe
 
 # 5-Minute Auto-Refresh Fragment
@@ -70,14 +45,20 @@ def run_options_screener():
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.caption(f"Last scanned at: {current_time} (Auto-refreshes every 5 mins)")
     
-    fo_universe = get_dynamic_universe()
+    fo_universe = get_custom_universe()
     scanned_results = []
+    
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
     
     for sym, ticker in fo_universe.items():
         try:
-            t = yf.Ticker(ticker)
+            t = yf.Ticker(ticker, session=session)
             hist = t.history(period="5d", interval="5m")
-            if len(hist) < 35:
+            
+            if hist.empty or len(hist) < 10:
                 continue
                 
             hist.index = pd.to_datetime(hist.index)
