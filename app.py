@@ -26,12 +26,11 @@ def render_options_dashboard():
         "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "TATASTEEL", "ITC"
     ]
     
-    # Simulating/Fetching real-time calculation loop (Replace with your actual strategy logic or API feed)
+    # Simulating/Fetching real-time calculation loop
     np.random.seed(int(datetime.datetime.now().timestamp() // 300)) # Changes state every 5 mins
     
     data = []
     for sym in symbols:
-        # Base price bracket estimation for Indian market items
         base_price = np.random.uniform(22000, 25000) if "NIFTY" in sym else np.random.uniform(500, 3000)
         ltp = round(base_price, 2)
         
@@ -68,7 +67,7 @@ def render_options_dashboard():
             return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
         return ''
 
-   styled_df = df.style.map(color_signals, subset=['Signal'])
+    styled_df = df.style.map(color_signals, subset=['Signal'])
     
     # Render table on UI
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
