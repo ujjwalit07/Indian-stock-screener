@@ -5,22 +5,20 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="Indian Market Breakout Screener", layout="wide")
 
-st.sidebar.header("⚙️ Strategy & Parameters")
+st.sidebar.header("⚙️ Screener Mode & Parameters")
 
-# Strategy Selection
-strategy = st.sidebar.selectbox(
-    "Choose Strategy", 
-    ["1. Recent Breakout (Last 3-5 Days)", "2. Tight Consolidation Squeeze (Watchlist)"]
+mode = st.sidebar.radio(
+    "Scan Mode", 
+    ["🔥 Top Breakout Candidates (Always Shows Results)", "🎯 Strict Filter Only"]
 )
 
 timeframe = st.sidebar.selectbox("Timeframe", ["1d", "1wk"], index=0)
-lookback_days = st.sidebar.slider("Check Breakout Over Last N Candles", 1, 5, 3)
-max_consolidation = st.sidebar.number_input("Max Consolidation Range (%)", value=15.0)
-min_rel_vol = st.sidebar.number_input("Min Relative Volume (x)", value=1.2)
-min_body_size = st.sidebar.number_input("Min Candle Body Size (%)", value=2.0)
+max_consolidation = st.sidebar.slider("Max Consolidation Range (%)", 5.0, 30.0, 20.0)
+min_rel_vol = st.sidebar.slider("Min Relative Volume (x)", 0.5, 3.0, 1.0)
+min_body_size = st.sidebar.slider("Min Candle Body Size (%)", 0.5, 5.0, 1.0)
 
-# Expanded Nifty 100 Ticker List
-NIFTY_100 = [
+# Top 50 Highly Liquid NSE Stocks
+NIFTY_TICKERS = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
     "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LARSEN.NS", "TATAMOTORS.NS", 
     "SUNPHARMA.NS", "NTPC.NS", "KOTAKBANK.NS", "MARUTI.NS", "ONGC.NS",
@@ -30,144 +28,141 @@ NIFTY_100 = [
     "AXISBANK.NS", "POWERGRID.NS", "ULTRACEMCO.NS", "ASIANPAINT.NS", "TITAN.NS",
     "DMART.NS", "ADANIENT.NS", "ADANIPORTS.NS", "BAJAJFINSV.NS", "HCLTECH.NS",
     "NESTLEIND.NS", "SIEMENS.NS", "IOC.NS", "DLF.NS", "VBL.NS", "JINDALSTEL.NS",
-    "TATAPOWER.NS", "INDIGO.NS", "HAVELLS.NS", "AMBUJACEM.NS", "POLYCAB.NS"
+    "TATAPOWER.NS", "INDIGO.NS", "HAVELLS.NS", "POLYCAB.NS"
 ]
 
-@st.cache_data(ttl=600)
-def run_screener(tickers, interval, max_cons, min_rvol, min_body, lookback, strat):
-    results = []
+@st.cache_data(ttl=300)
+def fetch_and_scan(tickers, interval, mode_choice, max_cons, min_rvol, min_body):
+    tickers_str = " ".join(tickers)
+    period = "6mo" if interval == "1d" else "2y"
+    
+    # Download ALL stocks in one single request to avoid rate limits
+    try:
+        data = yf.download(tickers_str, period=period, interval=interval, group_by='ticker', auto_adjust=True, progress=False)
+    except Exception as e:
+        return [], {}, f"Data Fetch Error: {str(e)}"
+
+    scanned_data = []
     charts = {}
-    
-    progress_bar = st.progress(0)
-    total_tickers = len(tickers)
-    
-    for i, ticker in enumerate(tickers):
-        progress_bar.progress((i + 1) / total_tickers)
+
+    for ticker in tickers:
         try:
-            stock = yf.Ticker(ticker)
-            df = stock.history(period="6mo", interval=interval)
-            
-            if df.empty or len(df) < 40:
+            df = data[ticker].dropna() if len(tickers) > 1 else data.dropna()
+                
+            if df.empty or len(df) < 30:
                 continue
-                
-            # Strategy 1: Recent Breakout (Checks last N candles)
-            if "1. Recent Breakout" in strat:
-                passed = False
-                breakout_idx = None
-                
-                # Check if ANY of the last N candles broke out
-                for check_idx in range(-1, -1 - lookback, -1):
-                    candle = df.iloc[check_idx]
-                    prev_window = df.iloc[check_idx - 20 : check_idx] # 20 candles prior to breakout
-                    
-                    if len(prev_window) < 20:
-                        continue
-                        
-                    cons_high = prev_window['High'].max()
-                    cons_low = prev_window['Low'].min()
-                    cons_range = ((cons_high - cons_low) / cons_low) * 100
-                    
-                    avg_vol = prev_window['Volume'].mean()
-                    rvol = candle['Volume'] / avg_vol if avg_vol > 0 else 0
-                    body_size = (abs(candle['Close'] - candle['Open']) / candle['Open']) * 100
-                    
-                    is_breakout = candle['Close'] > cons_high
-                    
-                    if is_breakout and (cons_range <= max_cons) and (rvol >= min_rvol) and (body_size >= min_body):
-                        passed = True
-                        breakout_idx = check_idx
-                        results.append({
-                            "Ticker": ticker,
-                            "Current Price (₹)": round(df.iloc[-1]['Close'], 2),
-                            "Breakout Date": candle.name.strftime('%Y-%m-%d'),
-                            "Breakout Price (₹)": round(candle['Close'], 2),
-                            "Volume Spike": f"{round(rvol, 2)}x",
-                            "Consolidation Range": f"{round(cons_range, 2)}%"
-                        })
-                        charts[ticker] = {
-                            "data": df.iloc[-60:],
-                            "cons_high": cons_high,
-                            "cons_low": cons_low,
-                            "breakout_date": candle.name
-                        }
-                        break # Stop checking older candles once found
 
-            # Strategy 2: Tight Consolidation Squeeze (Watchlist)
-            else:
-                window = df.iloc[-20:]
-                cons_high = window['High'].max()
-                cons_low = window['Low'].min()
-                cons_range = ((cons_high - cons_low) / cons_low) * 100
-                latest = df.iloc[-1]
-                
-                # Near high (within 3% of 20-day high) and tight consolidation (< 10%)
-                near_high = latest['Close'] >= (cons_high * 0.97)
-                
-                if (cons_range <= 10.0) and near_high:
-                    results.append({
-                        "Ticker": ticker,
-                        "Price (₹)": round(latest['Close'], 2),
-                        "20-Day High (₹)": round(cons_high, 2),
-                        "Tightness Range": f"{round(cons_range, 2)}%",
-                        "Status": "Coiling near resistance ⚡"
-                    })
-                    charts[ticker] = {
-                        "data": df.iloc[-60:],
-                        "cons_high": cons_high,
-                        "cons_low": cons_low,
-                        "breakout_date": None
-                    }
-
-        except Exception as e:
-            continue
+            latest = df.iloc[-1]
+            prev_20 = df.iloc[-21:-1]
             
-    progress_bar.empty()
-    return results, charts
+            cons_high = float(prev_20['High'].max())
+            cons_low = float(prev_20['Low'].min())
+            cons_range = ((cons_high - cons_low) / cons_low) * 100
+            
+            avg_vol = float(prev_20['Volume'].mean())
+            latest_vol = float(latest['Volume'])
+            rel_vol = (latest_vol / avg_vol) if avg_vol > 0 else 0
+            
+            latest_close = float(latest['Close'])
+            latest_open = float(latest['Open'])
+            body_size = (abs(latest_close - latest_open) / latest_open) * 100
+            
+            dist_from_high = ((latest_close - cons_high) / cons_high) * 100
+            
+            is_breakout = latest_close >= cons_high
+            cons_ok = cons_range <= max_cons
+            vol_ok = rel_vol >= min_rvol
+            body_ok = body_size >= min_body
 
-# --- Main UI ---
-st.title("📈 Indian Market Stock Screener")
-st.caption(f"Active Strategy: **{strategy}**")
+            # Breakout Readiness Score
+            score = 0
+            if is_breakout: score += 50
+            if cons_ok: score += 20
+            if vol_ok: score += 15
+            if body_ok: score += 15
+            score += min(rel_vol * 10, 30)
+            score += min(body_size * 5, 20)
+
+            record = {
+                "Ticker": ticker,
+                "Price (₹)": round(latest_close, 2),
+                "Dist from High (%)": f"{round(dist_from_high, 2)}%",
+                "Volume Spike": f"{round(rel_vol, 2)}x",
+                "Candle Body": f"{round(body_size, 2)}%",
+                "Consolidation Range": f"{round(cons_range, 2)}%",
+                "Status": "🔥 Breaking Out!" if is_breakout else "⚡ Coiling Near High",
+                "_score": score,
+                "_passed_all": is_breakout and cons_ok and vol_ok and body_ok
+            }
+
+            charts[ticker] = {"data": df.iloc[-60:], "high": cons_high, "low": cons_low}
+
+            if mode_choice == "🎯 Strict Filter Only":
+                if record["_passed_all"]:
+                    scanned_data.append(record)
+            else:
+                scanned_data.append(record)
+
+        except Exception:
+            continue
+
+    # Sorting
+    scanned_data.sort(key=lambda x: x["_score"], reverse=True)
+    
+    if mode_choice != "🎯 Strict Filter Only":
+        scanned_data = scanned_data[:10] # Show top 10 best setups
+
+    return scanned_data, charts, None
+
+# Main UI Layout
+st.title("📈 Indian Market Breakout & Momentum Screener")
 
 if st.button("🚀 Run Scan", type="primary"):
-    with st.spinner("Scanning top liquid NSE stocks..."):
-        results, charts = run_screener(
-            NIFTY_100, timeframe, max_consolidation, 
-            min_rel_vol, min_body_size, lookback_days, strategy
+    with st.spinner("Downloading NSE batch data and scanning setups..."):
+        results, charts, err = fetch_and_scan(
+            NIFTY_TICKERS, timeframe, mode, 
+            max_consolidation, min_rel_vol, min_body_size
         )
         
-        if not results:
-            st.warning("No stocks found matching these exact criteria right now. Try expanding 'Check Breakout Over Last N Candles' or increasing 'Max Consolidation Range'.")
+        if err:
+            st.error(f"Error: {err}")
+        elif not results:
+            st.warning("No stocks matched the strict filter right now. Try switching Scan Mode to '🔥 Top Breakout Candidates'.")
         else:
-            st.success(f"Found {len(results)} matching stock(s)!")
-            st.dataframe(pd.DataFrame(results), use_container_width=True)
+            st.success(f"Displaying top {len(results)} setup(s)!")
             
-            st.markdown("### 📊 Interactive Charts")
+            # Render Clean Table
+            display_df = pd.DataFrame(results).drop(columns=["_score", "_passed_all"])
+            st.dataframe(display_df, use_container_width=True)
+            
+            st.markdown("### 📊 Interactive Setup Charts")
             for res in results:
                 ticker = res["Ticker"]
-                chart_info = charts[ticker]
-                df_chart = chart_info["data"]
-                
-                fig = go.Figure(data=[go.Candlestick(
-                    x=df_chart.index,
-                    open=df_chart['Open'], high=df_chart['High'],
-                    low=df_chart['Low'], close=df_chart['Close'],
-                    name="Price"
-                )])
-                
-                # Highlight resistance box
-                fig.add_shape(
-                    type="rect",
-                    x0=df_chart.index[-25], y0=chart_info["cons_low"],
-                    x1=df_chart.index[-1], y1=chart_info["cons_high"],
-                    fillcolor="rgba(0, 255, 0, 0.08)",
-                    line=dict(color="green", width=1, dash="dot"),
-                )
-                
-                fig.update_layout(
-                    title=f"{ticker} - Chart Setup",
-                    yaxis_title="Price (₹)",
-                    xaxis_rangeslider_visible=False,
-                    height=380,
-                    margin=dict(l=0, r=0, t=35, b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                if ticker in charts:
+                    chart_info = charts[ticker]
+                    df_chart = chart_info["data"]
+                    
+                    fig = go.Figure(data=[go.Candlestick(
+                        x=df_chart.index,
+                        open=df_chart['Open'], high=df_chart['High'],
+                        low=df_chart['Low'], close=df_chart['Close'],
+                        name="Price"
+                    )])
+                    
+                    # Resistance / Consolidation Box
+                    fig.add_shape(
+                        type="rect",
+                        x0=df_chart.index[-21], y0=chart_info["low"],
+                        x1=df_chart.index[-1], y1=chart_info["high"],
+                        fillcolor="rgba(0, 255, 0, 0.08)",
+                        line=dict(color="green", width=1, dash="dot"),
+                    )
+                    
+                    fig.update_layout(
+                        title=f"{ticker} | Price: ₹{res['Price (₹)']} | Vol Spike: {res['Volume Spike']} | Status: {res['Status']}",
+                        yaxis_title="Price (₹)",
+                        xaxis_rangeslider_visible=False,
+                        height=380,
+                        margin=dict(l=0, r=0, t=35, b=0)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
