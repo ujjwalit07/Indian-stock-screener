@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 st.title("📊 Live 10-Stock/Index Options Signal Dashboard")
-st.markdown("Tracking **real-time Indian market prices** via Yahoo Finance with automatic **5-minute refresh** and clean formatting.")
+st.markdown("Tracking **real-time Indian market prices** via Yahoo Finance with automatic **5-minute refresh**, dynamic signals, and correct Risk-Reward levels.")
 
 # 5-Minute Auto-Refresh Fragment
 @st.fragment(run_every=300)
@@ -37,22 +37,25 @@ def render_options_dashboard():
     data = []
     for sym, ticker in stock_tickers.items():
         ltp = 0.0
+        prev_close = 0.0
         try:
-            # Fetch live market data
+            # Fetch live market data (last 5 days to reliably get previous close)
             t = yf.Ticker(ticker)
-            hist = t.history(period="2d")
+            hist = t.history(period="5d")
             if not hist.empty:
                 ltp = float(hist['Close'].iloc[-1])
+                prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else ltp
         except Exception:
             ltp = 0.0
+            prev_close = 0.0
             
-        # Fallback if market is closed or API call fails temporarily
+        # Fallback if API call fails temporarily
         if ltp == 0.0:
             ltp = 24500.0 if "NIFTY" in sym else 1000.0
+            prev_close = ltp
             
-        # Determine Call (CE) or Put (PE) based on daily price movement or trend logic
-        # (You can replace this logic later with your exact SuperTrend/ML strategy rules)
-        action = "BUY CE" if ltp % 2 == 0 else "BUY PE"
+        # Dynamic Signal Logic: Compare current price with previous close (Green = BUY CE, Red = BUY PE)
+        action = "BUY CE" if ltp >= prev_close else "BUY PE"
         
         # Dynamic Risk Management: 1.2% Stop Loss, 2.5% Target
         sl_multiplier = 0.012
@@ -84,7 +87,7 @@ def render_options_dashboard():
             return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
         return ''
 
-    # Apply styling and strictly format all numerical columns to 2 decimal places
+    # Apply styling and strictly format numerical columns to 2 decimal places
     styled_df = df.style.map(color_signals, subset=['Signal']).format({
         "Spot / LTP": "{:.2f}",
         "Stop Loss (SL)": "{:.2f}",
