@@ -7,33 +7,37 @@ import requests
 st.set_page_config(page_title="NSE F&O Scanner (Large Universe)", page_icon="📈", layout="wide")
 
 st.title("📊 NSE Custom F&O Intraday Screener")
-st.markdown("Select stocks from your custom list to scan for VWAP + SuperTrend signals.")
+st.markdown("Select Indices and Stocks to scan for VWAP + SuperTrend signals.")
 
-# 1. YOUR CUSTOM UNIVERSE
+# 1. UPDATED UNIVERSE (Indices + Stocks)
 @st.cache_data
 def get_full_universe():
-    # Mapping of Name -> Ticker
-    # Included a representative subset of your provided list
-    return {
-        "RELIANCE": "RELIANCE.NS", "TCS": "TCS.NS", "INFY": "INFY.NS", "HDFCBANK": "HDFCBANK.NS",
-        "ICICIBANK": "ICICIBANK.NS", "SBIN": "SBIN.NS", "AXISBANK": "AXISBANK.NS", "ITC": "ITC.NS",
-        "TATAMOTORS": "TATAMOTORS.NS", "LT": "LT.NS", "BHARTIARTL": "BHARTIARTL.NS", "KOTAKBANK": "KOTAKBANK.NS",
-        "HINDUNILVR": "HINDUNILVR.NS", "ASIANPAINT": "ASIANPAINT.NS", "MARUTI": "MARUTI.NS", "SUNPHARMA": "SUNPHARMA.NS",
-        "TITAN": "TITAN.NS", "BAJFINANCE": "BAJFINANCE.NS", "ULTRACEMCO": "ULTRACEMCO.NS", "NTPC": "NTPC.NS",
-        "POWERGRID": "POWERGRID.NS", "TATASTEEL": "TATASTEEL.NS", "WIPRO": "WIPRO.NS", "HCLTECH": "HCLTECH.NS",
-        "ADANIENT": "ADANIENT.NS", "ADANIPORTS": "ADANIPORTS.NS", "COALINDIA": "COALINDIA.NS", "GRASIM": "GRASIM.NS",
-        "JSWSTEEL": "JSWSTEEL.NS", "ONGC": "ONGC.NS", "BPCL": "BPCL.NS", "HEROMOTOCO": "HEROMOTOCO.NS",
-        "EICHERMOT": "EICHERMOT.NS", "BRITANNIA": "BRITANNIA.NS", "NESTLEIND": "NESTLEIND.NS", "TATACONSUM": "TATACONSUM.NS",
-        "CIPLA": "CIPLA.NS", "DRREDDY": "DRREDDY.NS", "DIVISLAB": "DIVISLAB.NS", "APOLLOHOSP": "APOLLOHOSP.NS"
-        # You can continue adding the rest of your 208 stocks here
+    # Indices mapped to YF Tickers
+    universe = {
+        "NIFTY 50": "^NSEI",
+        "NIFTY BANK": "^NSEBANK",
+        "NIFTY FIN SERVICES": "^CNXFIN",
+        "NIFTY NEXT 50": "^CNXNXT50",
+        "NIFTY MIDCAP SELECT": "^MIDCPNIFTY"
     }
+    
+    # Adding the rest of your stock list
+    stocks = {
+        "RELIANCE": "RELIANCE.NS", "TCS": "TCS.NS", "INFY": "INFY.NS", 
+        "HDFCBANK": "HDFCBANK.NS", "ICICIBANK": "ICICIBANK.NS", "SBIN": "SBIN.NS",
+        "AXISBANK": "AXISBANK.NS", "ITC": "ITC.NS", "TATAMOTORS": "TATAMOTORS.NS",
+        "LT": "LT.NS", "BHARTIARTL": "BHARTIARTL.NS", "KOTAKBANK": "KOTAKBANK.NS",
+        # ... [Add the rest of your 208 stocks here]
+    }
+    universe.update(stocks)
+    return universe
 
 # Sidebar selection
-all_stocks = get_full_universe()
+all_assets = get_full_universe()
 selected_symbols = st.sidebar.multiselect(
-    "Select stocks to scan (Select up to 20 for speed):",
-    list(all_stocks.keys()),
-    default=["RELIANCE", "TCS", "INFY", "HDFCBANK"]
+    "Select Indices/Stocks to scan:",
+    list(all_assets.keys()),
+    default=["NIFTY 50", "NIFTY BANK"]
 )
 
 if st.button("Run Scan"):
@@ -44,7 +48,7 @@ if st.button("Run Scan"):
     progress_bar = st.progress(0)
     
     for idx, sym in enumerate(selected_symbols):
-        ticker = all_stocks[sym]
+        ticker = all_assets[sym]
         progress_bar.progress((idx + 1) / len(selected_symbols), text=f"Scanning {sym}...")
         
         try:
@@ -54,7 +58,7 @@ if st.button("Run Scan"):
             if hist.empty or len(hist) < 10:
                 continue
                 
-            # --- Indicators (Optimized) ---
+            # VWAP Calculation
             hist['VWAP'] = (hist['Volume'] * ((hist['High'] + hist['Low']) / 2)).cumsum() / hist['Volume'].cumsum()
             
             # SuperTrend Logic
@@ -68,7 +72,6 @@ if st.button("Run Scan"):
             upper = hl2 + (3.0 * hist['ATR'])
             lower = hl2 - (3.0 * hist['ATR'])
             
-            # Simple Directional logic
             curr_dir = 1 if hist['Close'].iloc[-1] > upper.iloc[-2] else -1
             
             scanned_results.append({
@@ -85,4 +88,4 @@ if st.button("Run Scan"):
     if scanned_results:
         st.dataframe(pd.DataFrame(scanned_results))
     else:
-        st.warning("No data retrieved. Check internet or API limits.")
+        st.warning("No data retrieved. Ensure Ticker matches Yahoo Finance availability.")
