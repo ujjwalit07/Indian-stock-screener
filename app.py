@@ -7,8 +7,8 @@ import requests
 # Page Configuration
 st.set_page_config(page_title="NSE F&O Intraday Screener", page_icon="📈", layout="wide")
 
-st.title("📊 NSE F&O Intraday Screener (Debug & Fix Mode)")
-st.markdown("Scanning NSE Futures & Options stocks with visible error tracking.")
+st.title("📊 NSE F&O Intraday Screener (Extended Universe + VWAP + SuperTrend)")
+st.markdown("Scanning high-liquidity NSE Futures & Options stocks with corrected Pandas compatibility.")
 
 # 1. EXTENDED NSE F&O STOCK UNIVERSE
 @st.cache_data(ttl=86400)
@@ -54,7 +54,6 @@ def run_options_screener():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     })
     
-    # Test with a small subset first or loop through all
     progress_bar = st.progress(0, text="Initializing market scan...")
     total_stocks = len(fo_universe)
     
@@ -112,14 +111,14 @@ def run_options_screener():
             f_lb = lb.copy()
             
             for i in range(1, len(hist)):
-                if not pd.isnan(ub[i]) and not pd.isnan(f_ub[i-1]):
+                if not pd.isna(ub[i]) and not pd.isna(f_ub[i-1]):
                     f_ub[i] = ub[i] if (ub[i] < f_ub[i-1] or close_vals[i-1] > f_ub[i-1]) else f_ub[i-1]
-                if not pd.isnan(lb[i]) and not pd.isnan(f_lb[i-1]):
+                if not pd.isna(lb[i]) and not pd.isna(f_lb[i-1]):
                     f_lb[i] = lb[i] if (lb[i] > f_lb[i-1] or close_vals[i-1] < f_lb[i-1]) else f_lb[i-1]
                     
-                if not pd.isnan(close_vals[i]) and not pd.isnan(f_ub[i-1]) and close_vals[i] > f_ub[i-1]:
+                if not pd.isna(close_vals[i]) and not pd.isna(f_ub[i-1]) and close_vals[i] > f_ub[i-1]:
                     direction[i] = 1
-                elif not pd.isnan(close_vals[i]) and not pd.isnan(f_lb[i-1]) and close_vals[i] < f_lb[i-1]:
+                elif not pd.isna(close_vals[i]) and not pd.isna(f_lb[i-1]) and close_vals[i] < f_lb[i-1]:
                     direction[i] = -1
                 else:
                     direction[i] = direction[i-1]
@@ -178,7 +177,6 @@ def run_options_screener():
         st.error(f"Scanning complete, but no valid data was retrieved.")
         if last_error:
             st.warning(f"Last encountered exception: `{last_error}`")
-        st.info("Tip: Yahoo Finance sometimes blocks automated cloud IPs or throttles requests when querying too many symbols at once. Try running it locally or reducing the stock list size.")
         return
         
     df = pd.DataFrame(scanned_results)
