@@ -106,7 +106,7 @@ def run_momentum_screener():
             t = yf.Ticker(ticker, session=session)
             hist = t.history(period="2d", interval="5m")
             
-            if hist.empty or len(hist) < 15:
+            if hist.empty or len(hist) < 5:
                 continue
                 
             hist.index = pd.to_datetime(hist.index)
@@ -117,8 +117,8 @@ def run_momentum_screener():
                 lambda x: (x['Volume'] * ((x['High'] + x['Low']) / 2)).cumsum() / x['Volume'].cumsum()
             ).reset_index(level=0, drop=True)
             
-            # Volume Surge Check
-            hist['Avg_Volume'] = hist['Volume'].rolling(window=10).mean()
+            # Volume Surge Check (Reduced to 3 periods / 15 minutes for fast initialization)
+            hist['Avg_Volume'] = hist['Volume'].rolling(window=3).mean()
             
             ltp = float(hist['Close'].iloc[-1])
             vwap = float(hist['VWAP'].iloc[-1])
