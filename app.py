@@ -1,179 +1,98 @@
 import streamlit as st
-import pandas as pd
-import datetime
-import pytz
 import yfinance as yf
-import requests
+import pandas as pd
+import pandas_ta as ta
 
-# Page Configuration
-st.set_page_config(page_title="10-15 Min Momentum Screener", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Animesh Setup Scanner", layout="wide")
 
-st.title("⚡ NSE 10-15 Min Momentum & Volume Surge Screener")
-st.markdown("Optimized for short-duration intraday trades using Volume Spikes, Session VWAP, and Recent Price Momentum.")
+st.title("Intraday Options Strategy Scanner")
+st.markdown("Scanning stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
 
-# Liquid F&O Universe for Fast Scanning
-@st.cache_data
-def get_momentum_universe():
-    return {
-        "RELIANCE": "RELIANCE.NS", "TCS": "TCS.NS", "INFY": "INFY.NS", 
-        "HDFCBANK": "HDFCBANK.NS", "ICICIBANK": "ICICIBANK.NS", "SBIN": "SBIN.NS", 
-        "AXISBANK": "AXISBANK.NS", "ITC": "ITC.NS", "TATAMOTORS": "TATAMOTORS.NS", 
-        "LT": "LT.NS", "BHARTIARTL": "BHARTIARTL.NS", "KOTAKBANK": "KOTAKBANK.NS",
-        "HINDUNILVR": "HINDUNILVR.NS", "ASIANPAINT": "ASIANPAINT.NS", "MARUTI": "MARUTI.NS", 
-        "SUNPHARMA": "SUNPHARMA.NS", "TITAN": "TITAN.NS", "BAJFINANCE": "BAJFINANCE.NS", 
-        "ULTRACEMCO": "ULTRACEMCO.NS", "NTPC": "NTPC.NS", "POWERGRID": "POWERGRID.NS", 
-        "TATASTEEL": "TATASTEEL.NS", "WIPRO": "WIPRO.NS", "HCLTECH": "HCLTECH.NS", 
-        "ADANIENT": "ADANIENT.NS", "ADANIPORTS": "ADANIPORTS.NS", "COALINDIA": "COALINDIA.NS", 
-        "JSWSTEEL": "JSWSTEEL.NS", "ONGC": "ONGC.NS", "BPCL": "BPCL.NS", 
-        "TRENT": "TRENT.NS", "BEL": "BEL.NS", "M&M": "M&M.NS", "INDUSINDBK": "INDUSINDBK.NS",
-        "HINDALCO": "HINDALCO.NS", "HAL": "HAL.NS", "DLF": "DLF.NS", "NIFTY 50": "^NSEI"
-    }
+# Default list of popular NSE tickers
+default_tickers = "RELIANCE.NS, TCS.NS, HDFCBANK.NS, INFY.NS, ICICIBANK.NS, SBIN.NS, BHARTIARTL.NS, ITC.NS, KOTAKBANK.NS, HAL.NS, ^NSEI"
 
-# Check if NSE Market is Currently Open (IST Timezone)
-def is_market_open():
-    ist = pytz.timezone('Asia/Kolkata')
-    now_ist = datetime.datetime.now(ist)
+tickers_input = st.text_input(
+    "Enter Yahoo Finance Tickers (comma-separated):",
+    value=default_tickers
+)
+
+tickers = [t.strip() for t in tickers_input.split(",") if t.strip()]
+
+if st.button("Run Market Scanner"):
+    results = []
+    progress_bar = st.progress(0)
+    total = len(tickers)
     
-    # Check if weekend (Saturday = 5, Sunday = 6)
-    if now_ist.weekday() >= 5:
-        return False, "Market is Closed (Weekend)"
-        
-    market_start = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-    market_end = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
-    
-    if market_start <= now_ist <= market_end:
-        return True, "Market is Open"
-    else:
-        return False, "Market is Closed (Active hours: 09:15 AM - 03:30 PM IST)"
-
-# Fast Auto-Refresh Fragment
-@st.fragment(run_every=120)
-def run_momentum_screener():
-    ist = pytz.timezone('Asia/Kolkata')
-    current_time = datetime.datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
-    st.caption(f"Last scanned at: {current_time} (Auto-refreshes every 2 mins)")
-    
-    open_status, message = is_market_open()
-    
-    if not open_status:
-        st.warning(f"⚠️ **{message}**. Live intraday screening is paused to prevent stale post-market data distortion. Check back during trading hours (9:15 AM - 3:30 PM IST).")
-        return
-
-    universe = get_momentum_universe()
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
-    
-    with st.spinner("Scanning for volume spikes and momentum breakouts..."):
-        volume_data = []
-        tickers_list = list(universe.values())
-        
+    for idx, ticker in enumerate(tickers):
         try:
-            bulk_df = yf.download(tickers_list, period="2d", group_by='ticker', progress=False, threads=True)
-            for sym, ticker in universe.items():
-                try:
-                    if ticker in bulk_df.columns.levels[0]:
-                        df_t = bulk_df[ticker].dropna()
-                        if not df_t.empty:
-                            latest_vol = float(df_t['Volume'].iloc[-1])
-                            volume_data.append({"Symbol": sym, "Ticker": ticker, "Volume": latest_vol})
-                except Exception:
-                    continue
-        except Exception as e:
-            st.error(f"Error fetching data: {e}")
-            return
-
-    if not volume_data:
-        st.warning("Could not retrieve market data.")
-        return
-
-    vol_df = pd.DataFrame(volume_data)
-    top_active = vol_df.sort_values(by="Volume", ascending=False).head(20)
-    
-    st.subheader("🚀 High-Momentum Breakout Candidates")
-    
-    scanned_results = []
-    progress_bar = st.progress(0, text="Analyzing 5-minute momentum & volume surges...")
-    
-    for idx, row in enumerate(top_active.iterrows()):
-        sym = row[1]["Symbol"]
-        ticker = row[1]["Ticker"]
-        
-        progress_bar.progress((idx + 1) / len(top_active), text=f"Checking: {sym}")
-        
-        try:
-            t = yf.Ticker(ticker, session=session)
-            hist = t.history(period="2d", interval="5m")
+            # 1. Fetch Daily Data for Bias
+            df_daily = yf.download(ticker, period="5d", interval="1d", progress=False)
+            if df_daily.empty or len(df_daily) < 2:
+                continue
             
-            if hist.empty or len(hist) < 5:
+            if isinstance(df_daily.columns, pd.MultiIndex):
+                df_daily.columns = df_daily.columns.get_level_values(0)
+
+            prev_day_close = df_daily['Close'].iloc[-2]
+            prev_day_open = df_daily['Open'].iloc[-2]
+            is_bullish_day = prev_day_close > prev_day_open
+            is_bearish_day = prev_day_close < prev_day_open
+
+            # 2. Fetch 5-Minute Intraday Data
+            df_5m = yf.download(ticker, period="5d", interval="5m", progress=False)
+            if df_5m.empty or len(df_5m) < 200:
                 continue
                 
-            hist.index = pd.to_datetime(hist.index)
-            hist['Date'] = hist.index.date
-            
-            # Session VWAP Calculation
-            hist['VWAP'] = hist.groupby('Date').apply(
-                lambda x: (x['Volume'] * ((x['High'] + x['Low']) / 2)).cumsum() / x['Volume'].cumsum()
-            ).reset_index(level=0, drop=True)
-            
-            # Volume Surge Check (Reduced to 3 periods / 15 minutes for fast initialization)
-            hist['Avg_Volume'] = hist['Volume'].rolling(window=3).mean()
-            
-            ltp = float(hist['Close'].iloc[-1])
-            vwap = float(hist['VWAP'].iloc[-1])
-            latest_vol = float(hist['Volume'].iloc[-1])
-            avg_vol = float(hist['Avg_Volume'].iloc[-1])
-            
-            is_volume_surge = latest_vol > (1.5 * avg_vol)
-            
-            green_candle_1 = hist['Close'].iloc[-1] > hist['Open'].iloc[-1]
-            green_candle_2 = hist['Close'].iloc[-2] > hist['Open'].iloc[-2]
-            red_candle_1 = hist['Close'].iloc[-1] < hist['Open'].iloc[-1]
-            red_candle_2 = hist['Close'].iloc[-2] < hist['Open'].iloc[-2]
-            
-            is_bullish_momentum = is_volume_surge and (ltp > vwap) and green_candle_1 and green_candle_2
-            is_bearish_momentum = is_volume_surge and (ltp < vwap) and red_candle_1 and red_candle_2
-            
-            if is_bullish_momentum:
-                status = "MOMENTUM BUY (CE)"
-                action = "LONG"
-            elif is_bearish_momentum:
-                status = "MOMENTUM SELL (PE)"
-                action = "SHORT"
+            if isinstance(df_5m.columns, pd.MultiIndex):
+                df_5m.columns = df_5m.columns.get_level_values(0)
+
+            # 3. Calculate Indicators
+            df_5m['EMA_High'] = ta.ema(df_5m['High'], length=200)
+            df_5m['EMA_Low'] = ta.ema(df_5m['Low'], length=50)
+
+            st_df = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=3)
+            if st_df is not None and not st_df.empty:
+                dir_col = [col for col in st_df.columns if 'd_' in col or 'direction' in col][0]
+                df_5m['Supertrend_Dir'] = st_df[dir_col]
             else:
-                status = "WATCHING"
-                action = "NEUTRAL"
+                continue
+
+            latest = df_5m.iloc[-1]
             
-            if action != "NEUTRAL":
-                scanned_results.append({
-                    "Symbol": sym,
-                    "LTP": ltp,
-                    "VWAP": vwap,
-                    "Vol Spike Multiplier": round(latest_vol / avg_vol, 2) if avg_vol > 0 else 0,
-                    "Signal": status
+            band_top = max(latest['EMA_High'], latest['EMA_Low'])
+            band_bottom = min(latest['EMA_High'], latest['EMA_Low'])
+            
+            in_band = (latest['Close'] >= band_bottom) and (latest['Close'] <= band_top)
+            st_dir = latest['Supertrend_Dir']
+            
+            # Supertrend direction convention in pandas_ta: 1 = Uptrend, -1 = Downtrend
+            is_supertrend_bullish = (st_dir == 1) or (st_dir == -1 and latest['Close'] > st_df.iloc[-1].filter(like='SUPERT_').values[0] if len(st_df.columns)>0 else True)
+            
+            # Strategy Match Logic
+            signal = "None"
+            if is_bullish_day and in_band:
+                signal = "Buy CE Setup"
+            elif is_bearish_day and in_band:
+                signal = "Buy PE Setup"
+
+            if signal != "None":
+                results.append({
+                    "Ticker": ticker,
+                    "Current Price": round(float(latest['Close']), 2),
+                    "Signal": signal,
+                    "Daily Bias": "Bullish" if is_bullish_day else "Bearish"
                 })
-        except Exception:
-            continue
-            
+
+        except Exception as e:
+            pass
+        
+        progress_bar.progress((idx + 1) / total)
+
     progress_bar.empty()
     
-    if scanned_results:
-        res_df = pd.DataFrame(scanned_results)
-        
-        def color_signals(val):
-            if "BUY" in val: return 'background-color: #d4edda; color: #155724; font-weight: bold;'
-            elif "SELL" in val: return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
-            return ''
-
-        styled_df = res_df.style.map(color_signals, subset=['Signal']).format({
-            "LTP": "{:.2f}",
-            "VWAP": "{:.2f}",
-            "Vol Spike Multiplier": "{:.2f}x"
-        })
-        
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    if results:
+        st.success(f"Successfully found {len(results)} active setups!")
+        df_res = pd.DataFrame(results)
+        st.dataframe(df_res, use_container_width=True)
     else:
-        st.info("Scanning active tickers... No immediate 10-15 minute volume breakout triggers found right now.")
-
-run_momentum_screener()
+        st.info("No active setups matching the EMA band pullback criteria found right now.")
