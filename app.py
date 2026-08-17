@@ -101,87 +101,76 @@ def calculate_supertrend(df, period=10, multiplier=3):
     df['Supertrend_Dir'] = trend
     return df
 
-# --- Sidebar Controls for Auto-Refresh ---
-st.sidebar.header("Auto-Refresh Settings")
-enable_auto = st.sidebar.checkbox("Enable 2-Minute Auto-Refresh", value=False)
-
-# Native Streamlit fragment handles scheduled background reruns cleanly
-@st.fragment(run_every=120 if enable_auto else None)
-def render_scanner():
-    if enable_auto:
-        st.sidebar.info("Auto-refresh active: Rerunning every 2 minutes.")
+# Run button
+if st.button("Run Intraday Scanner", type="primary"):
+    results = []
+    progress_bar = st.progress(0)
+    total = len(tickers)
     
-    if enable_auto or st.button("Run Full F&O Market Scanner"):
-        results = []
-        progress_bar = st.progress(0)
-        total = len(tickers)
-        
-        for idx, ticker in enumerate(tickers):
-            try:
-                # 1. Fetch Daily Data for Bias
-                df_daily = yf.download(ticker, period="5d", interval="1d", progress=False)
-                if df_daily.empty or len(df_daily) < 2:
-                    continue
-                
-                if isinstance(df_daily.columns, pd.MultiIndex):
-                    df_daily.columns = df_daily.columns.get_level_values(0)
-
-                prev_day_close = df_daily['Close'].iloc[-2]
-                prev_day_open = df_daily['Open'].iloc[-2]
-                is_bullish_day = prev_day_close > prev_day_open
-                is_bearish_day = prev_day_close < prev_day_open
-
-                # 2. Fetch 5-Minute Intraday Data
-                df_5m = yf.download(ticker, period="5d", interval="5m", progress=False)
-                if df_5m.empty or len(df_5m) < 200:
-                    continue
-                    
-                if isinstance(df_5m.columns, pd.MultiIndex):
-                    df_5m.columns = df_5m.columns.get_level_values(0)
-
-                # 3. Calculate Indicators natively
-                df_5m['EMA_High'] = df_5m['High'].ewm(span=200, adjust=False).mean()
-                df_5m['EMA_Low'] = df_5m['Low'].ewm(span=50, adjust=False).mean()
-                df_5m = calculate_supertrend(df_5m, period=10, multiplier=3)
-
-                latest = df_5m.iloc[-1]
-                
-                band_top = max(latest['EMA_High'], latest['EMA_Low'])
-                band_bottom = min(latest['EMA_High'], latest['EMA_Low'])
-                
-                in_band = (latest['Close'] >= band_bottom) and (latest['Close'] <= band_top)
-                st_dir = latest['Supertrend_Dir']
-                
-                is_supertrend_bullish = (st_dir == 1)
-                is_supertrend_bearish = (st_dir == -1)
-                
-                # Strategy Match Logic
-                signal = "None"
-                if is_bullish_day and in_band and is_supertrend_bearish:
-                    signal = "Buy CE Setup"
-                elif is_bearish_day and in_band and is_supertrend_bullish:
-                    signal = "Buy PE Setup"
-
-                if signal != "None":
-                    results.append({
-                        "Ticker": ticker,
-                        "Current Price": round(float(latest['Close']), 2),
-                        "Signal": signal,
-                        "Daily Bias": "Bullish" if is_bullish_day else "Bearish"
-                    })
-
-            except Exception as _e:
-                pass
+    for idx, ticker in enumerate(tickers):
+        try:
+            # 1. Fetch Daily Data for Bias
+            df_daily = yf.download(ticker, period="5d", interval="1d", progress=False)
+            if df_daily.empty or len(df_daily) < 2:
+                continue
             
-            progress_bar.progress((idx + 1) / total)
+            if isinstance(df_daily.columns, pd.MultiIndex):
+                df_daily.columns = df_daily.columns.get_level_values(0)
 
-        progress_bar.empty()
+            prev_day_close = df_daily['Close'].iloc[-2]
+            prev_day_open = df_daily['Open'].iloc[-2]
+            is_bullish_day = prev_day_close > prev_day_open
+            is_bearish_day = prev_day_close < prev_day_open
+
+            # 2. Fetch 5-Minute Intraday Data
+            df_5m = yf.download(ticker, period="5d", interval="5m", progress=False)
+            if df_5m.empty or len(df_5m) < 200:
+                continue
+                
+            if isinstance(df_5m.columns, pd.MultiIndex):
+                df_5m.columns = df_5m.columns.get_level_values(0)
+
+            # 3. Calculate Indicators natively
+            df_5m['EMA_High'] = df_5m['High'].ewm(span=200, adjust=False).mean()
+            df_5m['EMA_Low'] = df_5m['Low'].ewm(span=50, adjust=False).mean()
+            df_5m = calculate_supertrend(df_5m, period=10, multiplier=3)
+
+            latest = df_5m.iloc[-1]
+            
+            band_top = max(latest['EMA_High'], latest['EMA_Low'])
+            band_bottom = min(latest['EMA_High'], latest['EMA_Low'])
+            
+            in_band = (latest['Close'] >= band_bottom) and (latest['Close'] <= band_top)
+            st_dir = latest['Supertrend_Dir']
+            
+            is_supertrend_bullish = (st_dir == 1)
+            is_supertrend_bearish = (st_dir == -1)
+            
+            # Strategy Match Logic
+            signal = "None"
+            if is_bullish_day and in_band and is_supertrend_bearish:
+                signal = "Buy CE Setup"
+            elif is_bearish_day and in_band and is_supertrend_bullish:
+                signal = "Buy PE Setup"
+
+            if signal != "None":
+                results.append({
+                    "Ticker": ticker,
+                    "Current Price": round(float(latest['Close']), 2),
+                    "Signal": signal,
+                    "Daily Bias": "Bullish" if is_bullish_day else "Bearish"
+                })
+
+        except Exception as _e:
+            pass
         
-        if results:
-            st.success(f"Successfully found {len(results)} active setups across the F&O list!")
-            df_res = pd.DataFrame(results)
-            st.dataframe(df_res, use_container_width=True)
-        else:
-            st.info("No active F&O setups matching the EMA band pullback criteria found right now.")
+        progress_bar.progress((idx + 1) / total)
 
-render_scanner()
+    progress_bar.empty()
+    
+    if results:
+        st.success(f"Successfully found {len(results)} active setups across the F&O list!")
+        df_res = pd.DataFrame(results)
+        st.dataframe(df_res, use_container_width=True)
+    else:
+        st.info("No active F&O setups matching the EMA band pullback criteria found right now.")
