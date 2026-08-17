@@ -1,24 +1,107 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 
-st.set_page_config(page_title="Animesh Setup Scanner", layout="wide")
+st.set_page_config(page_title="Animesh Setup F&O Scanner", layout="wide")
 
-st.title("Intraday Options Strategy Scanner")
-st.markdown("Scanning stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
+st.title("NSE F&O Intraday Options Scanner")
+st.markdown("Scanning the complete list of F&O stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
 
-# Default list of popular NSE tickers
-default_tickers = "RELIANCE.NS, TCS.NS, HDFCBANK.NS, INFY.NS, ICICIBANK.NS, SBIN.NS, BHARTIARTL.NS, ITC.NS, KOTAKBANK.NS, HAL.NS, ^NSEI"
+# Complete list of tickers extracted from the provided image
+fno_tickers_list = [
+    "^NSEI", "360ONE.NS", "ABB.NS", "APLAPOLLOS.NS", "AUBANK.NS", "ADANENSOL.NS", 
+    "ADANIENT.NS", "ADANIGREEN.NS", "ADANIPORTS.NS", "ADANIPOWER.NS", "ABCAPITAL.NS", 
+    "ALKEM.NS", "AMBER.NS", "AMBUJACEM.NS", "ANGELONE.NS", "APOLLOHOSP.NS", 
+    "ASHOKLEY.NS", "ASIANPAINT.NS", "ASTRAL.NS", "AUROPHARMA.NS", "DMART.NS", 
+    "AXISBANK.NS", "BSE.NS", "BAJAJ-AUTO.NS", "BAJFINANCE.NS", "BAJAJFINSV.NS", 
+    "BAJAJHLDNG.NS", "BANDHANBNK.NS", "BANKBARODA.NS", "BANKINDIA.NS", "BDL.NS", 
+    "BEL.NS", "BHARATFORG.NS", "BHEL.NS", "BPCL.NS", "BHARTIARTL.NS", "BIOCON.NS", 
+    "BLUESTARCO.NS", "BOSCHLTD.NS", "BRITANNIA.NS", "CGPOWER.NS", "CANBK.NS", 
+    "CDSL.NS", "CHOLAFIN.NS", "CIPLA.NS", "COALINDIA.NS", "COCHINSHIP.NS", 
+    "COFORGE.NS", "COLPAL.NS", "CAMS.NS", "CONCOR.NS", "CROMPTON.NS", 
+    "CUMMINSIND.NS", "DLF.NS", "DABUR.NS", "DALBHARAT.NS", "DELHIVERY.NS", 
+    "DIVISLAB.NS", "DIXON.NS", "DRREDDY.NS", "ETERNAL.NS", "EICHERMOT.NS", 
+    "FORCEMOT.NS", "NYKAA.NS", "FORTIS.NS", "GAIL.NS", "GVT&D.NS", "GMRAIRPORT.NS", 
+    "GLENMARK.NS", "GODFRYPHLP.NS", "GODREJCP.NS", "GODREJPROP.NS", "GRASIM.NS", 
+    "HCLTECH.NS", "HDFCAMC.NS", "HDFCBANK.NS", "HDFCLIFE.NS", "HAVELLS.NS", 
+    "HEROMOTOCO.NS", "HINDALCO.NS", "HAL.NS", "HINDPETRO.NS", "HINDUNILVR.NS", 
+    "HINDZINC.NS", "POWERINDIA.NS", "HYUNDAI.NS", "ICICIBANK.NS", "ICICIGI.NS", 
+    "ICICIPRULI.NS", "IDFCFIRSTB.NS", "ITC.NS", "INDIANB.NS", "IEX.NS", "IOC.NS", 
+    "IRFC.NS", "IREDA.NS", "INDUSTOWER.NS", "INDUSINDBK.NS", "NAUKRI.NS", 
+    "INFY.NS", "INOXWIND.NS", "INDIGO.NS", "JINDALSTEL.NS", "JSWENERGY.NS", 
+    "JSWSTEEL.NS", "JIOFIN.NS", "JUBLFOOD.NS", "KEI.NS", "KPITTECH.NS", 
+    "KALYANKJIL.NS", "KAYNES.NS", "KFINTECH.NS", "KOTAKBANK.NS", "LT.NS", 
+    "LICI.NS", "LTIM.NS", "LUPIN.NS", "M&M.NS", "MANAPPURAM.NS", "MANKIND.NS", 
+    "MARICO.NS", "MARUTI.NS", "MFSL.NS", "MAXHEALTH.NS", "MAZDOCK.NS", 
+    "MOTILALOFS.NS", "MPHASIS.NS", "MCX.NS", "MUTHOOTFIN.NS", "NBCC.NS", 
+    "NHPC.NS", "NMDC.NS", "NTPC.NS", "NATIONALUM.NS", "NESTLEIND.NS", 
+    "NAM-INDIA.NS", "OBEROIRLTY.NS", "ONGC.NS", "OIL.NS", "PAYTM.NS", "OFSS.NS", 
+    "POLICYBZR.NS", "PGEL.NS", "PIIND.NS", "PNBHOUSING.NS", "PAGEIND.NS", 
+    "PATANJALI.NS", "PERSISTENT.NS", "PETRONET.NS", "PIDILITIND.NS", "POLYCAB.NS", 
+    "PFC.NS", "POWERGRID.NS", "PREMIERENE.NS", "PRESTIGE.NS", "PNB.NS", 
+    "RBLBANK.NS", "RECLTD.NS", "RADICO.NS", "RVNL.NS", "RELIANCE.NS", "SBICARD.NS", 
+    "SBILIFE.NS", "SHREECEM.NS", "SRF.NS", "MOTHERSON.NS", "SHRIRAMFIN.NS", 
+    "SIEMENS.NS", "SOLARINDS.NS", "SONACOMS.NS", "SBIN.NS", "SAIL.NS", 
+    "SUNPHARMA.NS", "SUPREMEIND.NS", "SUZLON.NS", "SWIGGY.NS", "TATACONSUM.NS", 
+    "TATASTEEL.NS", "TVSMOTOR.NS", "TCS.NS", "TATAELXSI.NS", "TMPV.NS", 
+    "TATAPOWER.NS", "TECHM.NS", "FEDERALBNK.NS", "INDHOTEL.NS", "PHOENIXLTD.NS", 
+    "TITAN.NS", "TORNTPOWER.NS", "TRENT.NS", "TIINDIA.NS", "UNOMINDA.NS", 
+    "UPL.NS", "UNIONBANK.NS", "UNITDSPR.NS", "VBL.NS", "VEDL.NS", "VMM.NS", 
+    "IDEA.NS", "VOLTAS.NS", "WAAREENER.NS", "WIPRO.NS", "YESBANK.NS", "ZYDUSLIFE.NS"
+]
 
-tickers_input = st.text_input(
-    "Enter Yahoo Finance Tickers (comma-separated):",
-    value=default_tickers
+default_text = ", ".join(fno_tickers_list)
+
+tickers_input = st.text_area(
+    "Edit or add Yahoo Finance Tickers (comma-separated):",
+    value=default_text,
+    height=150
 )
 
 tickers = [t.strip() for t in tickers_input.split(",") if t.strip()]
 
-if st.button("Run Market Scanner"):
+def calculate_supertrend(df, period=10, multiplier=3):
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    
+    price_hl2 = (high + low) / 2
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.ewm(span=period, adjust=False).mean()
+    
+    basic_ub = price_hl2 + multiplier * atr
+    basic_lb = price_hl2 - multiplier * atr
+    
+    final_ub = basic_ub.copy()
+    final_lb = basic_lb.copy()
+    trend = pd.Series(1, index=df.index)
+    
+    for i in range(1, len(df)):
+        if basic_ub.iloc[i] < final_ub.iloc[i-1] or close.iloc[i-1] > final_ub.iloc[i-1]:
+            final_ub.iloc[i] = basic_ub.iloc[i]
+        else:
+            final_ub.iloc[i] = final_ub.iloc[i-1]
+            
+        if basic_lb.iloc[i] > final_lb.iloc[i-1] or close.iloc[i-1] < final_lb.iloc[i-1]:
+            final_lb.iloc[i] = basic_lb.iloc[i]
+        else:
+            final_lb.iloc[i] = final_lb.iloc[i-1]
+            
+        if close.iloc[i] > final_ub.iloc[i-1]:
+            trend.iloc[i] = 1
+        elif close.iloc[i] < final_lb.iloc[i-1]:
+            trend.iloc[i] = -1
+        else:
+            trend.iloc[i] = trend.iloc[i-1]
+            
+    df['Supertrend_Dir'] = trend
+    return df
+
+if st.button("Run Full F&O Market Scanner"):
     results = []
     progress_bar = st.progress(0)
     total = len(tickers)
@@ -46,16 +129,10 @@ if st.button("Run Market Scanner"):
             if isinstance(df_5m.columns, pd.MultiIndex):
                 df_5m.columns = df_5m.columns.get_level_values(0)
 
-            # 3. Calculate Indicators
-            df_5m['EMA_High'] = ta.ema(df_5m['High'], length=200)
-            df_5m['EMA_Low'] = ta.ema(df_5m['Low'], length=50)
-
-            st_df = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=3)
-            if st_df is not None and not st_df.empty:
-                dir_col = [col for col in st_df.columns if 'd_' in col or 'direction' in col][0]
-                df_5m['Supertrend_Dir'] = st_df[dir_col]
-            else:
-                continue
+            # 3. Calculate Indicators natively
+            df_5m['EMA_High'] = df_5m['High'].ewm(span=200, adjust=False).mean()
+            df_5m['EMA_Low'] = df_5m['Low'].ewm(span=50, adjust=False).mean()
+            df_5m = calculate_supertrend(df_5m, period=10, multiplier=3)
 
             latest = df_5m.iloc[-1]
             
@@ -65,14 +142,14 @@ if st.button("Run Market Scanner"):
             in_band = (latest['Close'] >= band_bottom) and (latest['Close'] <= band_top)
             st_dir = latest['Supertrend_Dir']
             
-            # Supertrend direction convention in pandas_ta: 1 = Uptrend, -1 = Downtrend
-            is_supertrend_bullish = (st_dir == 1) or (st_dir == -1 and latest['Close'] > st_df.iloc[-1].filter(like='SUPERT_').values[0] if len(st_df.columns)>0 else True)
+            is_supertrend_bullish = (st_dir == 1)
+            is_supertrend_bearish = (st_dir == -1)
             
             # Strategy Match Logic
             signal = "None"
-            if is_bullish_day and in_band:
+            if is_bullish_day and in_band and is_supertrend_bearish:
                 signal = "Buy CE Setup"
-            elif is_bearish_day and in_band:
+            elif is_bearish_day and in_band and is_supertrend_bullish:
                 signal = "Buy PE Setup"
 
             if signal != "None":
@@ -83,7 +160,7 @@ if st.button("Run Market Scanner"):
                     "Daily Bias": "Bullish" if is_bullish_day else "Bearish"
                 })
 
-        except Exception as e:
+        except Exception as _e:
             pass
         
         progress_bar.progress((idx + 1) / total)
@@ -91,8 +168,8 @@ if st.button("Run Market Scanner"):
     progress_bar.empty()
     
     if results:
-        st.success(f"Successfully found {len(results)} active setups!")
+        st.success(f"Successfully found {len(results)} active setups across the F&O list!")
         df_res = pd.DataFrame(results)
         st.dataframe(df_res, use_container_width=True)
     else:
-        st.info("No active setups matching the EMA band pullback criteria found right now.")
+        st.info("No active F&O setups matching the EMA band pullback criteria found right now.")
