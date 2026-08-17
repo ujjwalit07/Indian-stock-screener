@@ -6,14 +6,17 @@ import numpy as np
 st.set_page_config(page_title="Intraday screener", layout="wide")
 
 st.title("Intraday screener")
-st.markdown("Scanning F&O stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
+st.markdown("Scanning high-liquidity F&O stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
 
-# Optimized high-liquidity F&O default list to prevent timeouts
+# Curated high-volume, liquid F&O stocks to ensure fast loading and zero timeouts
 fno_tickers_list = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
-    "SBIN.NS", "BHARTIARTL.NS", "LTIM.NS", "ITC.NS", "AXISBANK.NS", 
-    "KOTAKBANK.NS", "LT.NS", "BAJFINANCE.NS", "MARUTI.NS", "SUNPHARMA.NS", 
-    "TITAN.NS", "ASIANPAINT.NS", "HCLTECH.NS", "TATAMOTORS.NS", "TATASTEEL.NS"
+    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS", "LT.NS", 
+    "BAJFINANCE.NS", "MARUTI.NS", "SUNPHARMA.NS", "TITAN.NS", "ASIANPAINT.NS", 
+    "HCLTECH.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "AXISBANK.NS", "ADANIENT.NS", 
+    "ADANIPORTS.NS", "NTPC.NS", "POWERGRID.NS", "ONGC.NS", "COALINDIA.NS", 
+    "JSWSTEEL.NS", "GRASIM.NS", "INDUSINDBK.NS", "WIPRO.NS", "TECHM.NS", 
+    "BAJAJ-AUTO.NS", "NESTLEIND.NS", "BRITANNIA.NS", "CIPLA.NS", "APOLLOHOSP.NS"
 ]
 
 default_text = ", ".join(fno_tickers_list)
@@ -66,6 +69,9 @@ def calculate_supertrend(df, period=10, multiplier=3):
     df['Supertrend_Dir'] = trend
     return df
 
+# Helper to flatten yfinance dataframes safely
+fn_flatten = lambda col: col.iloc[:, 0] if isinstance(col, pd.DataFrame) else col
+
 # Run button
 if st.button("Run Intraday Scanner", type="primary"):
     results = []
@@ -82,8 +88,11 @@ if st.button("Run Intraday Scanner", type="primary"):
             if isinstance(df_daily.columns, pd.MultiIndex):
                 df_daily.columns = df_daily.columns.get_level_values(0)
 
-            prev_day_close = float(df_daily['Close'].iloc[-2])
-            prev_day_open = float(df_daily['Open'].iloc[-2])
+            close_d = fn_flatten(df_daily['Close'])
+            open_d = fn_flatten(df_daily['Open'])
+
+            prev_day_close = float(close_d.iloc[-2])
+            prev_day_open = float(open_d.iloc[-2])
             is_bullish_day = prev_day_close > prev_day_open
             is_bearish_day = prev_day_close < prev_day_open
 
@@ -95,12 +104,25 @@ if st.button("Run Intraday Scanner", type="primary"):
             if isinstance(df_5m.columns, pd.MultiIndex):
                 df_5m.columns = df_5m.columns.get_level_values(0)
 
-            # 3. Calculate Indicators natively
-            df_5m['EMA_High'] = df_5m['High'].ewm(span=200, adjust=False).mean()
-            df_5m['EMA_Low'] = df_5m['Low'].ewm(span=50, adjust=False).mean()
-            df_5m = calculate_supertrend(df_5m, period=10, multiplier=3)
+            high_5m = fn_flatten(df_5m['High'])
+            low_5m = fn_flatten(df_5m['Low'])
+            close_5m = fn_flatten(df_5m['Close'])
 
-            latest = df_5m.iloc[-1]
+            df_clean = pd.DataFrame({
+                'High': high_5m,
+                'Low': low_5m,
+                'Close': close_5m
+            }).dropna()
+
+            if len(df_clean) < 100:
+                continue
+
+            # 3. Calculate Indicators natively
+            df_clean['EMA_High'] = df_clean['High'].ewm(span=200, adjust=False).mean()
+            df_clean['EMA_Low'] = df_clean['Low'].ewm(span=50, adjust=False).mean()
+            df_clean = calculate_supertrend(df_clean, period=10, multiplier=3)
+
+            latest = df_clean.iloc[-1]
             
             band_top = max(float(latest['EMA_High']), float(latest['EMA_Low']))
             band_bottom = min(float(latest['EMA_High']), float(latest['EMA_Low']))
