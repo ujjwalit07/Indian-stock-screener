@@ -1,5 +1,5 @@
 streamlit
-pandas
 yfinance
-requests
-nsepython
+pandas
+numpy
+pandas_ta
