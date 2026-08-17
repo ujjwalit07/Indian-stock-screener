@@ -2,13 +2,23 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="Animesh Setup F&O Scanner", layout="wide")
+st.set_page_config(page_title="Intraday screener", layout="wide")
 
-st.title("NSE F&O Intraday Options Scanner")
-st.markdown("Scanning the complete list of F&O stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
+st.title("Intraday screener")
+st.markdown("Scanning F&O stocks for the **200 EMA High / 50 EMA Low** pullback channel, **Supertrend**, and **Daily Bias** setup.")
 
-# Complete list of tickers extracted from the provided image
+# --- Sidebar Controls for Auto-Refresh ---
+st.sidebar.header("Auto-Refresh Settings")
+enable_auto = st.sidebar.checkbox("Enable 2-Minute Auto-Refresh", value=False)
+
+if enable_auto:
+    # Refresh every 2 minutes (120,000 milliseconds)
+    count = st_autorefresh(interval=120000, limit=None, key="fno_auto_refresh")
+    st.sidebar.info(f"Auto-refresh active! Refresh count: {count}")
+
+# Complete list of F&O tickers
 fno_tickers_list = [
     "^NSEI", "360ONE.NS", "ABB.NS", "APLAPOLLOS.NS", "AUBANK.NS", "ADANENSOL.NS", 
     "ADANIENT.NS", "ADANIGREEN.NS", "ADANIPORTS.NS", "ADANIPOWER.NS", "ABCAPITAL.NS", 
@@ -101,7 +111,8 @@ def calculate_supertrend(df, period=10, multiplier=3):
     df['Supertrend_Dir'] = trend
     return df
 
-if st.button("Run Full F&O Market Scanner"):
+# Run automatically if auto-refresh is checked, or via button click
+if enable_auto or st.button("Run Full F&O Market Scanner"):
     results = []
     progress_bar = st.progress(0)
     total = len(tickers)
